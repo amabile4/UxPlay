@@ -1,5 +1,8 @@
 name: Windows Build
 
+permissions:
+  contents: write
+
 on:
   workflow_dispatch:
   push:
@@ -34,6 +37,8 @@ jobs:
             mingw-w64-x86_64-libplist
             mingw-w64-x86_64-openssl
             mingw-w64-x86_64-mdnsresponder
+            ca-certificates
+            mingw-w64-x86_64-gst-devtools
 
       - name: Create Bonjour SDK shim from mdnsresponder
         shell: msys2 {0}
@@ -58,9 +63,39 @@ jobs:
           export BUILD_DIR="$(cygpath -u "$GITHUB_WORKSPACE")/build"
           bash deploy_windows.sh
 
+      - name: Patch launcher env for stable playback defaults
+        shell: msys2 {0}
+        run: |
+          BAT="$(cygpath -u "$GITHUB_WORKSPACE")/build/uxplay.bat"
+          if [ ! -f "$BAT" ]; then
+            echo "uxplay.bat not found: $BAT"
+            exit 1
+          fi
+
+          if ! grep -q "GST_PLUGIN_FEATURE_RANK" "$BAT"; then
+            echo "set \"GST_PLUGIN_FEATURE_RANK=hlsdemux:0,nvh264dec:0,nvh265dec:0,wasapi2sink:0,wasapisink:0\"" >> "$BAT"
+          fi
+
+      - name: Validate packaged runtime files
+        shell: msys2 {0}
+        run: |
+          BUILD_DIR="$(cygpath -u "$GITHUB_WORKSPACE")/build"
+          test -f "$BUILD_DIR/uxplay.exe"
+          test -f "$BUILD_DIR/uxplay.bat"
+          test -f "$BUILD_DIR/ca-bundle.crt"
+          test -f "$BUILD_DIR/gstreamer-1.0/libexec/gst-plugin-scanner.exe"
+          test -f "$BUILD_DIR/gio/modules/libgiognutls.dll"
+
+          DLL_COUNT=$(find "$BUILD_DIR" -maxdepth 1 -type f -name "*.dll" | wc -l)
+          if [ "$DLL_COUNT" -lt 80 ]; then
+            echo "Unexpectedly low DLL count: $DLL_COUNT"
+            exit 1
+          fi
+
       - name: Create ZIP archive
         shell: pwsh
         run: |
+          if (Test-Path uxplay-windows.zip) { Remove-Item uxplay-windows.zip -Force }
           Compress-Archive -Path build\* -DestinationPath uxplay-windows.zip
 
       - name: Upload artifact
@@ -69,3 +104,19 @@ jobs:
           name: uxplay-windows-${{ github.ref_name }}-${{ github.sha }}
           path: uxplay-windows.zip
           retention-days: 30
+
+      - name: Publish ZIP to rolling release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: windows-resize-latest
+          target_commitish: ${{ github.sha }}
+          name: Windows Resize Latest
+          body: |
+            Auto-built Windows standalone package from `${{ github.ref_name }}`.
+            Commit: `${{ github.sha }}`
+          files: uxplay-windows.zip
+          overwrite_files: true
+          fail_on_unmatched_files: true
+          draft: false
+          prerelease: true
+          make_latest: false
