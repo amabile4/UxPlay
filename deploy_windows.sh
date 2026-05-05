@@ -114,8 +114,16 @@ EXTRA_BINS=(
 for bin in "${EXTRA_BINS[@]}"; do
     dst="$BUILD_DIR/$bin"
     if [ ! -f "$dst" ]; then
-        echo "  extra: $bin"
-        cp "$MINGW_BIN/$bin" "$BUILD_DIR/"
+        src="$MINGW_BIN/$bin"
+        if [ ! -f "$src" ]; then
+            src=$(find /c/msys64/mingw64 -name "$bin" 2>/dev/null | head -1)
+        fi
+        if [ -n "$src" ] && [ -f "$src" ]; then
+            echo "  extra: $bin"
+            cp "$src" "$BUILD_DIR/"
+        else
+            echo "  WARNING: extra runtime $bin が見つかりません（スキップ）"
+        fi
     fi
 done
 
