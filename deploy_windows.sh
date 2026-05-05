@@ -4,23 +4,26 @@
 
 set -e
 
-MINGW_BIN="/c/msys64/mingw64/bin"
-GST_PLUGIN_SRC="/c/msys64/mingw64/lib/gstreamer-1.0"
+MINGW_PREFIX="${MINGW_PREFIX:-/mingw64}"
+MINGW_BIN="$MINGW_PREFIX/bin"
+GST_PLUGIN_SRC="$MINGW_PREFIX/lib/gstreamer-1.0"
+GIO_MODULE_SRC="$MINGW_PREFIX/lib/gio/modules"
+CA_BUNDLE_SRC="/usr/ssl/certs/ca-bundle.crt"
 BUILD_DIR="${BUILD_DIR:-/f/git/UxPlay/build}"
 
 # gst-plugin-scanner.exe: GStreamer 1.24+ では廃止・同梱されないケースがある
 # 存在すればコピー、なければスキップ（GST_REGISTRY_FORK=no で不要）
 GST_SCANNER_EXE=""
 for _candidate in \
-    "/c/msys64/mingw64/libexec/gstreamer-1.0/gst-plugin-scanner.exe" \
-    "/c/msys64/mingw64/bin/gst-plugin-scanner.exe"; do
+    "$MINGW_PREFIX/libexec/gstreamer-1.0/gst-plugin-scanner.exe" \
+    "$MINGW_BIN/gst-plugin-scanner.exe"; do
     if [ -f "$_candidate" ]; then
         GST_SCANNER_EXE="$_candidate"
         break
     fi
 done
 if [ -z "$GST_SCANNER_EXE" ]; then
-    GST_SCANNER_EXE=$(find /c/msys64 -name "gst-plugin-scanner.exe" 2>/dev/null | head -1)
+    GST_SCANNER_EXE=$(find "$MINGW_PREFIX" -name "gst-plugin-scanner.exe" 2>/dev/null | head -1)
 fi
 if [ -n "$GST_SCANNER_EXE" ]; then
     GST_LIBEXEC_SRC="$(dirname "$GST_SCANNER_EXE")"
@@ -116,7 +119,7 @@ for bin in "${EXTRA_BINS[@]}"; do
     if [ ! -f "$dst" ]; then
         src="$MINGW_BIN/$bin"
         if [ ! -f "$src" ]; then
-            src=$(find /c/msys64/mingw64 -name "$bin" 2>/dev/null | head -1)
+            src=$(find "$MINGW_PREFIX" -name "$bin" 2>/dev/null | head -1)
         fi
         if [ -n "$src" ] && [ -f "$src" ]; then
             echo "  extra: $bin"
@@ -151,9 +154,9 @@ done
 echo ""
 echo "=== Step 3.5: GIO TLSモジュールとCA証明書をコピー ==="
 mkdir -p "$BUILD_DIR/gio/modules"
-cp "/c/msys64/mingw64/lib/gio/modules/libgiognutls.dll" "$BUILD_DIR/gio/modules/"
+cp "$GIO_MODULE_SRC/libgiognutls.dll" "$BUILD_DIR/gio/modules/"
 echo "  copied: libgiognutls.dll"
-cp "/c/msys64/usr/ssl/certs/ca-bundle.crt" "$BUILD_DIR/"
+cp "$CA_BUNDLE_SRC" "$BUILD_DIR/"
 echo "  copied: ca-bundle.crt"
 
 echo ""
