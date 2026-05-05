@@ -50,6 +50,8 @@ jobs:
         shell: pwsh
         run: |
           $candidates = @(
+            'C:\Windows\System32\dnssd.dll',
+            'C:\Windows\SysWOW64\dnssd.dll',
             'C:\Program Files\Bonjour\dnssd.dll',
             'C:\Program Files (x86)\Bonjour\dnssd.dll'
           )
@@ -58,6 +60,7 @@ jobs:
             Write-Error "Bonjour dnssd.dll not found in known locations"
             exit 1
           }
+          Write-Host "Found Bonjour dnssd.dll at: $dll"
           "BONJOUR_DLL_WIN=$dll" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Create Bonjour SDK shim from mdnsresponder
