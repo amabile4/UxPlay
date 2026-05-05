@@ -144,6 +144,18 @@ static void win_stop_resize(void) {
 }
 #endif  /* _WIN32 */
 
+void video_renderer_set_title(const char *title) {
+    if (!title) return;
+#ifdef _WIN32
+    HWND hwnd = win_find_hwnd();
+    if (hwnd) {
+        SetWindowTextA(hwnd, title);
+    }
+#else
+    g_set_application_name(title);
+#endif
+}
+
 static GstClockTime gst_video_pipeline_base_time = GST_CLOCK_TIME_NONE;
 static logger_t *logger = NULL;
 static unsigned short width, height, width_source, height_source;  /* not currently used */

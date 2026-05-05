@@ -68,6 +68,7 @@
 #include "renderers/video_renderer.h"
 #include "renderers/audio_renderer.h"
 #include "renderers/mux_renderer.h"
+#include "renderers/playback_info.h"
 #ifdef DBUS
 #include <dbus/dbus.h>
 #endif
@@ -104,6 +105,7 @@ static int64_t audio_delay_aac = 0;
 static bool relaunch_video = false;
 static bool reset_loop = false;
 static unsigned int open_connections= 0;
+static playback_info_t *g_playback_info = nullptr;
 static std::string videosink = "autovideosink";
 static std::string videosink_options = "";
 static videoflip_t videoflip[2] = { NONE , NONE };
@@ -2177,6 +2179,7 @@ extern "C" void video_reset(void *cls, reset_type_t type) {
 
 extern "C" int video_set_codec(void *cls, video_codec_t codec) {
     bool video_is_h265 = (codec == VIDEO_CODEC_H265);
+    playback_info_set_video_codec(g_playback_info, video_is_h265 ? 1 : 0);
     if (mux_to_file) {
         mux_renderer_choose_video_codec(video_is_h265);
     }
@@ -2233,6 +2236,7 @@ extern "C" void conn_destroy (void *cls) {
     open_connections--;
     LOGD("Open connections: %i", open_connections);
     if (open_connections == 0) {
+        playback_info_clear(g_playback_info);
         remote_clock_offset = 0;
         if (use_audio) {
             audio_renderer_stop();
@@ -2456,6 +2460,7 @@ extern "C" void audio_get_format (void *cls, unsigned char *ct, unsigned short *
     }
     audio_type = type;
     
+    playback_info_set_audio_codec(g_playback_info, *ct);
     if (use_audio) {
       audio_renderer_start(ct);
     }
@@ -2473,6 +2478,7 @@ extern "C" void audio_get_format (void *cls, unsigned char *ct, unsigned short *
 }
 
 extern "C" void video_report_size(void *cls, float *width_source, float *height_source, float *width, float *height) {
+    playback_info_set_resolution(g_playback_info, (int)*width, (int)*height);
     if (use_video) {
         video_renderer_size(width_source, height_source, width, height);
     }
@@ -3139,6 +3145,9 @@ int main (int argc, char *argv[]) {
     } else {
         LOGI("audio_disabled");
     }
+    if (!g_playback_info) {
+        g_playback_info = playback_info_create(video_decoder.c_str(), videosink.c_str());
+    }
     if (use_video) {
         video_renderer_init(render_logger, server_name.c_str(), videoflip, video_parser.c_str(), rtp_pipeline.c_str(),
                             video_decoder.c_str(), video_converter.c_str(), videosink.c_str(),
@@ -3270,6 +3279,8 @@ int main (int argc, char *argv[]) {
 }
  
 static void cleanup() {
+    playback_info_destroy(g_playback_info);
+    g_playback_info = nullptr;
     if (use_audio) {
         audio_renderer_destroy();
     }
