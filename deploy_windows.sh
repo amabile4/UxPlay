@@ -6,8 +6,16 @@ set -e
 
 MINGW_BIN="/c/msys64/mingw64/bin"
 GST_PLUGIN_SRC="/c/msys64/mingw64/lib/gstreamer-1.0"
-GST_LIBEXEC_SRC="/c/msys64/mingw64/libexec/gstreamer-1.0"
 BUILD_DIR="${BUILD_DIR:-/f/git/UxPlay/build}"
+
+# gst-plugin-scanner.exe の場所はバージョンにより異なる: 動的検索する
+GST_SCANNER_EXE=$(find /c/msys64/mingw64 -name "gst-plugin-scanner.exe" 2>/dev/null | head -1)
+if [ -z "$GST_SCANNER_EXE" ]; then
+    echo "ERROR: gst-plugin-scanner.exe が /c/msys64/mingw64 以下に見つかりません"
+    exit 1
+fi
+GST_LIBEXEC_SRC="$(dirname "$GST_SCANNER_EXE")"
+echo "  scanner found at: $GST_SCANNER_EXE"
 
 echo "=== Step 1: uxplay.exe の直接DLL依存を収集 ==="
 ldd "$BUILD_DIR/uxplay.exe" | grep "mingw64" | awk '{print $3}' | while read src; do
