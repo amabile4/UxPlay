@@ -1,0 +1,71 @@
+name: Windows Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - windows-resize
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          cache: true
+          install: >-
+            base-devel
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-gstreamer
+            mingw-w64-x86_64-gst-plugins-base
+            mingw-w64-x86_64-gst-plugins-good
+            mingw-w64-x86_64-gst-plugins-bad
+            mingw-w64-x86_64-gst-plugins-ugly
+            mingw-w64-x86_64-gst-libav
+            mingw-w64-x86_64-libplist
+            mingw-w64-x86_64-openssl
+            mingw-w64-x86_64-mdnsresponder
+
+      - name: Create Bonjour SDK shim from mdnsresponder
+        shell: msys2 {0}
+        run: |
+          SHIM="$(cygpath -u "$GITHUB_WORKSPACE")/ci-bonjour-sdk"
+          mkdir -p "$SHIM/Lib/x64" "$SHIM/Include"
+          cp /mingw64/include/dns_sd.h "$SHIM/Include/"
+          cp /mingw64/lib/libdns_sd.dll.a "$SHIM/Lib/x64/dnssd.lib"
+          echo "BONJOUR_SDK_HOME=$(cygpath -w "$SHIM")" >> "$GITHUB_ENV"
+
+      - name: Build
+        shell: msys2 {0}
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DPKG_CONFIG_EXECUTABLE="/mingw64/bin/pkg-config.exe"
+          cmake --build build --parallel
+
+      - name: Deploy (bundle DLLs and plugins)
+        shell: msys2 {0}
+        run: |
+          export BUILD_DIR="$(cygpath -u "$GITHUB_WORKSPACE")/build"
+          bash deploy_windows.sh
+
+      - name: Create ZIP archive
+        shell: pwsh
+        run: |
+          Compress-Archive -Path build\* -DestinationPath uxplay-windows.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: uxplay-windows-${{ github.ref_name }}-${{ github.sha }}
+          path: uxplay-windows.zip
+          retention-days: 30

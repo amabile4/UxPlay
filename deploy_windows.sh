@@ -7,7 +7,7 @@ set -e
 MINGW_BIN="/c/msys64/mingw64/bin"
 GST_PLUGIN_SRC="/c/msys64/mingw64/lib/gstreamer-1.0"
 GST_LIBEXEC_SRC="/c/msys64/mingw64/libexec/gstreamer-1.0"
-BUILD_DIR="/f/git/UxPlay/build"
+BUILD_DIR="${BUILD_DIR:-/f/git/UxPlay/build}"
 
 echo "=== Step 1: uxplay.exe の直接DLL依存を収集 ==="
 ldd "$BUILD_DIR/uxplay.exe" | grep "mingw64" | awk '{print $3}' | while read src; do
