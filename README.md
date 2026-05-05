@@ -1,3 +1,22 @@
+> **[個人フォーク / Personal Fork]**
+>
+> 本リポジトリは [FDH2/UxPlay](https://github.com/FDH2/UxPlay) v1.73.6 をベースにした個人フォークです。大っぴらな公開を意図したものではありません。バグ報告・質問は本家リポジトリへお寄せください。
+>
+> **追加・変更内容:**
+> - AirPlay の画面向き変更（縦横）に応じて Windows ウィンドウサイズを自動調整
+> - GitHub Actions による Windows スタンドアロンパッケージの自動ビルド
+>
+> **Windows バイナリのダウンロード:**  
+> [Releases ページ](../../releases) から `uxplay-windows.zip` を入手 → 展開後 `uxplay.bat` をダブルクリックして起動
+>
+> **⚠️ 事前に Bonjour をインストールしてください**（`dnssd.dll` はライセンスの都合で同梱していません）  
+> 以下のいずれかが必要です（既にインストール済みなら不要）:
+> - [iTunes for Windows](https://support.apple.com/ja-jp/111900)（Bonjour 同梱）
+> - [Bonjour Print Services for Windows](https://support.apple.com/ja-jp/106380)（単体インストーラー）
+> - Apple デバイスサポート等の Apple ソフトウェアがインストール済みの場合も可
+
+---
+
 # UxPlay 1.73: AirPlay-Mirror and AirPlay-Audio server for Linux, macOS, and Unix (also runs on Windows).
 
 ### **Now developed at the GitHub site <https://github.com/FDH2/UxPlay> (where ALL user issues should be posted, and latest versions can be found).**

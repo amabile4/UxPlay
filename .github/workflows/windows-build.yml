@@ -142,12 +142,19 @@ jobs:
       - name: Publish ZIP to rolling release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: windows-resize-latest
+          tag_name: v1.73.6-win1.0
           target_commitish: ${{ github.sha }}
-          name: Windows Resize Latest
+          name: UxPlay 1.73.6 Windows Port 1.0
           body: |
-            Auto-built Windows standalone package from `${{ github.ref_name }}`.
-            Commit: `${{ github.sha }}`
+            UxPlay 1.73.6 をベースにした Windows スタンドアロンパッケージです。
+
+            **追加機能:** AirPlay 画面向き変更時のウィンドウサイズ自動調整
+
+            **使い方:** `uxplay-windows.zip` を展開し `uxplay.bat` をダブルクリック
+
+            **⚠️ 要件:** Bonjour for Windows が必要です（iTunes または [Bonjour Print Services](https://support.apple.com/ja-jp/106380) でインストール）
+
+            Built from `${{ github.ref_name }}` @ `${{ github.sha }}`
           files: uxplay-windows.zip
           overwrite_files: true
           fail_on_unmatched_files: true
