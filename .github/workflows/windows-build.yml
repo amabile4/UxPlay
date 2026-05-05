@@ -99,7 +99,6 @@ jobs:
           test -f "$BUILD_DIR/uxplay.exe"
           test -f "$BUILD_DIR/uxplay.bat"
           test -f "$BUILD_DIR/ca-bundle.crt"
-          test -f "$BUILD_DIR/gstreamer-1.0/libexec/gst-plugin-scanner.exe"
           test -f "$BUILD_DIR/gio/modules/libgiognutls.dll"
           DLL_COUNT=$(find "$BUILD_DIR" -maxdepth 1 -type f -name "*.dll" | wc -l)
           if [ "$DLL_COUNT" -lt 80 ]; then

@@ -8,9 +8,9 @@ MINGW_BIN="/c/msys64/mingw64/bin"
 GST_PLUGIN_SRC="/c/msys64/mingw64/lib/gstreamer-1.0"
 BUILD_DIR="${BUILD_DIR:-/f/git/UxPlay/build}"
 
-# gst-plugin-scanner.exe の場所はバージョンにより異なる: 複数の候補を検索する
-# GStreamer 1.22 以前: /mingw64/libexec/gstreamer-1.0/
-# GStreamer 1.24+    : /mingw64/bin/ に移動した場合がある
+# gst-plugin-scanner.exe: GStreamer 1.24+ では廃止・同梱されないケースがある
+# 存在すればコピー、なければスキップ（GST_REGISTRY_FORK=no で不要）
+GST_SCANNER_EXE=""
 for _candidate in \
     "/c/msys64/mingw64/libexec/gstreamer-1.0/gst-plugin-scanner.exe" \
     "/c/msys64/mingw64/bin/gst-plugin-scanner.exe"; do
@@ -20,20 +20,15 @@ for _candidate in \
     fi
 done
 if [ -z "$GST_SCANNER_EXE" ]; then
-    echo "Candidate paths tried:"
-    echo "  /c/msys64/mingw64/libexec/gstreamer-1.0/gst-plugin-scanner.exe"
-    echo "  /c/msys64/mingw64/bin/gst-plugin-scanner.exe"
-    echo "Searching full MSYS2 tree (fallback)..."
     GST_SCANNER_EXE=$(find /c/msys64 -name "gst-plugin-scanner.exe" 2>/dev/null | head -1)
 fi
-if [ -z "$GST_SCANNER_EXE" ]; then
-    echo "ERROR: gst-plugin-scanner.exe が見つかりません"
-    ls /c/msys64/mingw64/libexec/ 2>/dev/null || true
-    ls /c/msys64/mingw64/bin/gst* 2>/dev/null || true
-    exit 1
+if [ -n "$GST_SCANNER_EXE" ]; then
+    GST_LIBEXEC_SRC="$(dirname "$GST_SCANNER_EXE")"
+    echo "  scanner found at: $GST_SCANNER_EXE"
+else
+    GST_LIBEXEC_SRC=""
+    echo "  gst-plugin-scanner.exe not found (GStreamer 1.24+ build, skipping)"
 fi
-GST_LIBEXEC_SRC="$(dirname "$GST_SCANNER_EXE")"
-echo "  scanner found at: $GST_SCANNER_EXE"
 
 echo "=== Step 1: uxplay.exe の直接DLL依存を収集 ==="
 ldd "$BUILD_DIR/uxplay.exe" | grep "mingw64" | awk '{print $3}' | while read src; do
@@ -49,9 +44,15 @@ echo "=== Step 2: GStreamerプラグインをコピー ==="
 mkdir -p "$BUILD_DIR/gstreamer-1.0"
 mkdir -p "$BUILD_DIR/gstreamer-1.0/libexec"
 
-# プラグインスキャナー（Windowsでの正常スキャンに必須）
-cp "$GST_LIBEXEC_SRC/gst-plugin-scanner.exe" "$BUILD_DIR/gstreamer-1.0/libexec/"
-echo "  scanner: gst-plugin-scanner.exe"
+# プラグインスキャナー（存在する場合のみコピー）
+if [ -n "$GST_LIBEXEC_SRC" ] && [ -f "$GST_LIBEXEC_SRC/gst-plugin-scanner.exe" ]; then
+    cp "$GST_LIBEXEC_SRC/gst-plugin-scanner.exe" "$BUILD_DIR/gstreamer-1.0/libexec/"
+    echo "  scanner: gst-plugin-scanner.exe"
+    HAS_SCANNER=1
+else
+    HAS_SCANNER=0
+    echo "  scanner: not present, skipping"
+fi
 
 PLUGINS=(
     libgstapp.dll
@@ -149,26 +150,28 @@ echo "  copied: ca-bundle.crt"
 
 echo ""
 echo "=== Step 4: ランチャーバッチファイルを作成 ==="
-cat > "$BUILD_DIR/uxplay.bat" << 'BATCHEOF'
-@echo off
-setlocal
-set "HERE=%~dp0"
-set "PATH=%HERE%;%HERE%gstreamer-1.0\libexec;C:\Windows\System32\downlevel;%PATH%"
-set "GST_PLUGIN_PATH=%HERE%gstreamer-1.0"
-set "GST_PLUGIN_SYSTEM_PATH=%HERE%gstreamer-1.0"
-set "GST_PLUGIN_SCANNER=%HERE%gstreamer-1.0\libexec\gst-plugin-scanner.exe"
-set "GST_PLUGIN_SCANNER_1_0=%HERE%gstreamer-1.0\libexec\gst-plugin-scanner.exe"
-set "GST_REGISTRY_PATH=%HERE%gst_registry.bin"
-set "GST_REGISTRY_FORK=no"
-set "GIO_MODULE_DIR=%HERE%gio\modules"
-set "GIO_USE_TLS=gnutls"
-set "SSL_CERT_FILE=%HERE%ca-bundle.crt"
-set "G_TLS_CA_FILE=%HERE%ca-bundle.crt"
-set "GST_DEBUG=*:1"
-set "GST_PLUGIN_FEATURE_RANK=hlsdemux:0,nvh264dec:0,nvh265dec:0,wasapi2sink:0,wasapisink:0"
-"%HERE%uxplay.exe" %*
-pause
-BATCHEOF
+{
+    printf '@echo off\r\n'
+    printf 'setlocal\r\n'
+    printf 'set "HERE=%%~dp0"\r\n'
+    printf 'set "PATH=%%HERE%%;%%HERE%%gstreamer-1.0\\libexec;C:\\Windows\\System32\\downlevel;%%PATH%%"\r\n'
+    printf 'set "GST_PLUGIN_PATH=%%HERE%%gstreamer-1.0"\r\n'
+    printf 'set "GST_PLUGIN_SYSTEM_PATH=%%HERE%%gstreamer-1.0"\r\n'
+    if [ "$HAS_SCANNER" -eq 1 ]; then
+        printf 'set "GST_PLUGIN_SCANNER=%%HERE%%gstreamer-1.0\\libexec\\gst-plugin-scanner.exe"\r\n'
+        printf 'set "GST_PLUGIN_SCANNER_1_0=%%HERE%%gstreamer-1.0\\libexec\\gst-plugin-scanner.exe"\r\n'
+    fi
+    printf 'set "GST_REGISTRY_PATH=%%HERE%%gst_registry.bin"\r\n'
+    printf 'set "GST_REGISTRY_FORK=no"\r\n'
+    printf 'set "GIO_MODULE_DIR=%%HERE%%gio\\modules"\r\n'
+    printf 'set "GIO_USE_TLS=gnutls"\r\n'
+    printf 'set "SSL_CERT_FILE=%%HERE%%ca-bundle.crt"\r\n'
+    printf 'set "G_TLS_CA_FILE=%%HERE%%ca-bundle.crt"\r\n'
+    printf 'set "GST_DEBUG=*:1"\r\n'
+    printf 'set "GST_PLUGIN_FEATURE_RANK=hlsdemux:0,nvh264dec:0,nvh265dec:0,wasapi2sink:0,wasapisink:0"\r\n'
+    printf '"%%HERE%%uxplay.exe" %%*\r\n'
+    printf 'pause\r\n'
+} > "$BUILD_DIR/uxplay.bat"
 echo "  作成: $BUILD_DIR/uxplay.bat"
 
 echo ""
