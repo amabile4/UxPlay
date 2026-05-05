@@ -34,6 +34,74 @@ static bool alt_keypress = false;
 static unsigned char X11_search_attempts = 0;
 #endif
 
+#ifdef _WIN32
+#include <windows.h>
+static int win_airplay_w = 0;
+static int win_airplay_h = 0;
+static gboolean win_resize_pending = FALSE;
+
+static HWND win_find_gst_hwnd(void) {
+    return FindWindowW(L"GstD3D11VideoSinkWin32", NULL);
+}
+
+/* Returns TRUE if the resize was applied; FALSE if it must be deferred. */
+static gboolean win_try_resize(int w, int h) {
+    if (w <= 0 || h <= 0) return TRUE;
+    HWND hwnd = win_find_gst_hwnd();
+    if (!hwnd) return FALSE;
+    /* Skip when title-bar-maximized */
+    if (IsZoomed(hwnd)) return FALSE;
+    /* Skip when d3d11videosink fullscreen (window covers full monitor) */
+    RECT wr;
+    GetWindowRect(hwnd, &wr);
+    MONITORINFO mi = {sizeof(mi)};
+    GetMonitorInfo(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mi);
+    if (wr.left == mi.rcMonitor.left && wr.top == mi.rcMonitor.top &&
+        wr.right == mi.rcMonitor.right && wr.bottom == mi.rcMonitor.bottom)
+        return FALSE;
+    /* Scale down to fit 90 % of work area while preserving aspect ratio */
+    int max_w = (mi.rcWork.right - mi.rcWork.left) * 9 / 10;
+    int max_h = (mi.rcWork.bottom - mi.rcWork.top) * 9 / 10;
+    if (w > max_w || h > max_h) {
+        double sw = (double)max_w / w, sh = (double)max_h / h;
+        double s = sw < sh ? sw : sh;
+        w = (int)(w * s);
+        h = (int)(h * s);
+    }
+    /* Expand client rect to outer window rect */
+    LONG st = GetWindowLong(hwnd, GWL_STYLE);
+    LONG ex = GetWindowLong(hwnd, GWL_EXSTYLE);
+    RECT r = {0, 0, w, h};
+    AdjustWindowRectEx(&r, st, FALSE, ex);
+    int ww = r.right - r.left, wh = r.bottom - r.top;
+    /* Center on work area */
+    int cx = mi.rcWork.left + (mi.rcWork.right - mi.rcWork.left - ww) / 2;
+    int cy = mi.rcWork.top + (mi.rcWork.bottom - mi.rcWork.top - wh) / 2;
+    SetWindowPos(hwnd, NULL, cx, cy, ww, wh, SWP_NOZORDER | SWP_NOACTIVATE);
+    return TRUE;
+}
+
+/* Periodic retry: called on the GLib main loop until the resize succeeds. */
+static gboolean win_retry_cb(gpointer data) {
+    if (win_try_resize(win_airplay_w, win_airplay_h)) {
+        win_resize_pending = FALSE;
+        return G_SOURCE_REMOVE;
+    }
+    return G_SOURCE_CONTINUE;
+}
+
+/* Invoked on the GLib main loop from video_renderer_size(). */
+static gboolean win_schedule_resize(gpointer data) {
+    if (win_try_resize(win_airplay_w, win_airplay_h)) {
+        win_resize_pending = FALSE;
+    } else if (!win_resize_pending) {
+        win_resize_pending = TRUE;
+        g_timeout_add(250, win_retry_cb, NULL);
+    }
+    return FALSE;
+}
+#endif  /* _WIN32 */
+
 static GstClockTime gst_video_pipeline_base_time = GST_CLOCK_TIME_NONE;
 static logger_t *logger = NULL;
 static unsigned short width, height, width_source, height_source;  /* not currently used */
@@ -178,6 +246,11 @@ void video_renderer_size(float *f_width_source, float *f_height_source, float *f
     width = (unsigned short) *f_width;
     height = (unsigned short) *f_height;
     logger_log(logger, LOGGER_DEBUG, "begin video stream wxh = %dx%d; source %dx%d", width, height, width_source, height_source);
+#ifdef _WIN32
+    win_airplay_w = (int) width;
+    win_airplay_h = (int) height;
+    g_main_context_invoke(NULL, win_schedule_resize, NULL);
+#endif
 }
 
 GstElement *make_video_sink(const char *videosink, const char *videosink_options) {
@@ -660,6 +733,10 @@ void video_renderer_stop() {
         gst_element_set_state (renderer->pipeline, GST_STATE_NULL);
         //gst_element_set_state (renderer->playbin, GST_STATE_NULL);
      }
+#ifdef _WIN32
+    win_airplay_w = 0;
+    win_airplay_h = 0;
+#endif
 }
 
 void video_renderer_set_device_model(const char *model, const char *name) {

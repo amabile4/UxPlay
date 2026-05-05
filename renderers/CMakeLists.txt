@@ -82,5 +82,6 @@ else()
   target_link_libraries( renderers PUBLIC ${GST_LINK_LIBRARIES} )
 endif()
 
-
-
+if(WIN32)
+  target_link_libraries(renderers PUBLIC user32)
+endif()
