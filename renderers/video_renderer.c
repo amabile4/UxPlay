@@ -40,6 +40,7 @@ static volatile LONG win_airplay_w = 0;
 static volatile LONG win_airplay_h = 0;
 static HANDLE win_resize_thread = NULL;
 static volatile BOOL win_resize_running = FALSE;
+static char win_pending_title[256] = {0};
 
 struct win_enum_data {
     DWORD pid;
@@ -108,6 +109,7 @@ static bool win_do_resize(void) {
     int y = mi.rcWork.top + (mi.rcWork.bottom - mi.rcWork.top - wh) / 2;
     SetWindowPos(hwnd, NULL, x, y, ww, wh,
                  SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+    if (win_pending_title[0]) SetWindowTextA(hwnd, win_pending_title);
     return true;
 }
 
@@ -147,10 +149,11 @@ static void win_stop_resize(void) {
 void video_renderer_set_title(const char *title) {
     if (!title) return;
 #ifdef _WIN32
+    strncpy(win_pending_title, title, sizeof(win_pending_title) - 1);
+    win_pending_title[sizeof(win_pending_title) - 1] = '\0';
     HWND hwnd = win_find_hwnd();
-    if (hwnd) {
-        SetWindowTextA(hwnd, title);
-    }
+    if (hwnd) SetWindowTextA(hwnd, title);
+    /* ウィンドウ未生成時は win_do_resize() のリトライループが発見時に適用する */
 #else
     g_set_application_name(title);
 #endif
