@@ -8,10 +8,28 @@ MINGW_BIN="/c/msys64/mingw64/bin"
 GST_PLUGIN_SRC="/c/msys64/mingw64/lib/gstreamer-1.0"
 BUILD_DIR="${BUILD_DIR:-/f/git/UxPlay/build}"
 
-# gst-plugin-scanner.exe の場所はバージョンにより異なる: 動的検索する
-GST_SCANNER_EXE=$(find /c/msys64/mingw64 -name "gst-plugin-scanner.exe" 2>/dev/null | head -1)
+# gst-plugin-scanner.exe の場所はバージョンにより異なる: 複数の候補を検索する
+# GStreamer 1.22 以前: /mingw64/libexec/gstreamer-1.0/
+# GStreamer 1.24+    : /mingw64/bin/ に移動した場合がある
+for _candidate in \
+    "/c/msys64/mingw64/libexec/gstreamer-1.0/gst-plugin-scanner.exe" \
+    "/c/msys64/mingw64/bin/gst-plugin-scanner.exe"; do
+    if [ -f "$_candidate" ]; then
+        GST_SCANNER_EXE="$_candidate"
+        break
+    fi
+done
 if [ -z "$GST_SCANNER_EXE" ]; then
-    echo "ERROR: gst-plugin-scanner.exe が /c/msys64/mingw64 以下に見つかりません"
+    echo "Candidate paths tried:"
+    echo "  /c/msys64/mingw64/libexec/gstreamer-1.0/gst-plugin-scanner.exe"
+    echo "  /c/msys64/mingw64/bin/gst-plugin-scanner.exe"
+    echo "Searching full MSYS2 tree (fallback)..."
+    GST_SCANNER_EXE=$(find /c/msys64 -name "gst-plugin-scanner.exe" 2>/dev/null | head -1)
+fi
+if [ -z "$GST_SCANNER_EXE" ]; then
+    echo "ERROR: gst-plugin-scanner.exe が見つかりません"
+    ls /c/msys64/mingw64/libexec/ 2>/dev/null || true
+    ls /c/msys64/mingw64/bin/gst* 2>/dev/null || true
     exit 1
 fi
 GST_LIBEXEC_SRC="$(dirname "$GST_SCANNER_EXE")"

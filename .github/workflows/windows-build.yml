@@ -50,7 +50,14 @@ jobs:
             echo "# MSYS2 package versions"
             date -u
             pacman -Q | grep -E '^(mingw-w64-x86_64-(gcc|gcc-libs|libplist|gnutls|openssl|gstreamer|gst-plugins-base|gst-plugins-good|gst-plugins-bad|gst-plugins-ugly|gst-libav)|ca-certificates) '
+            echo "# gst-plugin-scanner location"
+            find /c/msys64 -name "gst-plugin-scanner.exe" 2>/dev/null || echo "NOT FOUND"
+            echo "# gstreamer libexec dir contents"
+            ls /c/msys64/mingw64/libexec/gstreamer-1.0/ 2>/dev/null || echo "DIR NOT FOUND"
+            echo "# gst* in bin"
+            ls /c/msys64/mingw64/bin/gst* 2>/dev/null || echo "NONE"
           } > build/msys2-package-versions.txt
+          cat build/msys2-package-versions.txt
 
       - name: Create Bonjour SDK shim (dlltool, no Bonjour install needed)
         shell: msys2 {0}
