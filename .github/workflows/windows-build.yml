@@ -36,17 +36,42 @@ jobs:
             mingw-w64-x86_64-gst-libav
             mingw-w64-x86_64-libplist
             mingw-w64-x86_64-openssl
-            mingw-w64-x86_64-mdnsresponder
             ca-certificates
             mingw-w64-x86_64-gst-devtools
+
+      - name: Install Bonjour runtime
+        shell: pwsh
+        run: |
+          choco install bonjour --no-progress -y
+
+      - name: Verify Bonjour runtime
+        shell: pwsh
+        run: |
+          $dll = 'C:\Program Files\Bonjour\dnssd.dll'
+          if (!(Test-Path $dll)) {
+            Write-Error "Bonjour dnssd.dll not found at $dll"
+            exit 1
+          }
 
       - name: Create Bonjour SDK shim from mdnsresponder
         shell: msys2 {0}
         run: |
           SHIM="$(cygpath -u "$GITHUB_WORKSPACE")/ci-bonjour-sdk"
           mkdir -p "$SHIM/Lib/x64" "$SHIM/Include"
-          cp /mingw64/include/dns_sd.h "$SHIM/Include/"
-          cp /mingw64/lib/libdns_sd.dll.a "$SHIM/Lib/x64/dnssd.lib"
+
+          curl -fsSL \
+            "https://raw.githubusercontent.com/apple-oss-distributions/mDNSResponder/main/mDNSShared/dns_sd.h" \
+            -o "$SHIM/Include/dns_sd.h"
+
+          BONJOUR_DLL="/c/Program Files/Bonjour/dnssd.dll"
+          if [ ! -f "$BONJOUR_DLL" ]; then
+            echo "Bonjour DLL not found: $BONJOUR_DLL"
+            exit 1
+          fi
+
+          gendef "$BONJOUR_DLL"
+          dlltool -d dnssd.def -l "$SHIM/Lib/x64/dnssd.lib" -D dnssd.dll
+
           echo "BONJOUR_SDK_HOME=$(cygpath -w "$SHIM")" >> "$GITHUB_ENV"
 
       - name: Build
@@ -62,6 +87,11 @@ jobs:
         run: |
           export BUILD_DIR="$(cygpath -u "$GITHUB_WORKSPACE")/build"
           bash deploy_windows.sh
+
+      - name: Copy Bonjour runtime DLL into package
+        shell: pwsh
+        run: |
+          Copy-Item 'C:\Program Files\Bonjour\dnssd.dll' 'build\dnssd.dll' -Force
 
       - name: Patch launcher env for stable playback defaults
         shell: msys2 {0}
