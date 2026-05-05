@@ -51,11 +51,11 @@ jobs:
             date -u
             pacman -Q | grep -E '^(mingw-w64-x86_64-(gcc|gcc-libs|libplist|gnutls|openssl|gstreamer|gst-plugins-base|gst-plugins-good|gst-plugins-bad|gst-plugins-ugly|gst-libav)|ca-certificates) '
             echo "# gst-plugin-scanner location"
-            find /c/msys64 -name "gst-plugin-scanner.exe" 2>/dev/null || echo "NOT FOUND"
+            find /mingw64 -name "gst-plugin-scanner.exe" 2>/dev/null || echo "NOT FOUND"
             echo "# gstreamer libexec dir contents"
-            ls /c/msys64/mingw64/libexec/gstreamer-1.0/ 2>/dev/null || echo "DIR NOT FOUND"
+            ls /mingw64/libexec/gstreamer-1.0/ 2>/dev/null || echo "DIR NOT FOUND"
             echo "# gst* in bin"
-            ls /c/msys64/mingw64/bin/gst* 2>/dev/null || echo "NONE"
+            ls /mingw64/bin/gst* 2>/dev/null || echo "NONE"
           } > build/msys2-package-versions.txt
           cat build/msys2-package-versions.txt
 
@@ -119,11 +119,12 @@ jobs:
             for f in "$BUILD_DIR"/*.dll; do
               [ -f "$f" ] || continue
               b="$(basename "$f")"
-              src="$(ldd "$f" 2>/dev/null | grep '/mingw64/bin/' | head -n1 | awk '{print $3}')"
+              src="$(ldd "$f" 2>/dev/null | awk '/\/mingw64\/bin\// { print $3; exit }')"
               sha="$(sha256sum "$f" | awk '{print $1}')"
               printf '%s sha256=%s source=%s\n' "$b" "$sha" "${src:-unknown}"
             done | sort
           } > "$BUILD_DIR/packaged-dll-manifest.txt"
+          cat "$BUILD_DIR/packaged-dll-manifest.txt"
 
       - name: Create ZIP archive
         shell: pwsh
