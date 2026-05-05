@@ -26,9 +26,7 @@ jobs:
           cache: false
           install: >-
             mingw-w64-x86_64-gcc
-            mingw-w64-x86_64-tools
             mingw-w64-x86_64-pkgconf
-            mingw-w64-x86_64-make
             mingw-w64-x86_64-cmake
             mingw-w64-x86_64-ninja
             mingw-w64-x86_64-gstreamer
@@ -40,31 +38,8 @@ jobs:
             mingw-w64-x86_64-libplist
             mingw-w64-x86_64-openssl
             ca-certificates
-            mingw-w64-x86_64-gst-devtools
 
-      - name: Install Bonjour runtime
-        shell: pwsh
-        run: |
-          choco install bonjour --no-progress -y
-
-      - name: Verify Bonjour runtime
-        shell: pwsh
-        run: |
-          $candidates = @(
-            'C:\Windows\System32\dnssd.dll',
-            'C:\Windows\SysWOW64\dnssd.dll',
-            'C:\Program Files\Bonjour\dnssd.dll',
-            'C:\Program Files (x86)\Bonjour\dnssd.dll'
-          )
-          $dll = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-          if (-not $dll) {
-            Write-Error "Bonjour dnssd.dll not found in known locations"
-            exit 1
-          }
-          Write-Host "Found Bonjour dnssd.dll at: $dll"
-          "BONJOUR_DLL_WIN=$dll" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-      - name: Create Bonjour SDK shim from mdnsresponder
+      - name: Create Bonjour SDK shim (dlltool, no Bonjour install needed)
         shell: msys2 {0}
         run: |
           SHIM="$(cygpath -u "$GITHUB_WORKSPACE")/ci-bonjour-sdk"
@@ -74,14 +49,11 @@ jobs:
             "https://raw.githubusercontent.com/apple-oss-distributions/mDNSResponder/main/mDNSShared/dns_sd.h" \
             -o "$SHIM/Include/dns_sd.h"
 
-          BONJOUR_DLL="$(cygpath -u "$BONJOUR_DLL_WIN")"
-          if [ ! -f "$BONJOUR_DLL" ]; then
-            echo "Bonjour DLL not found: $BONJOUR_DLL"
-            exit 1
-          fi
+          printf 'LIBRARY dnssd.dll\nEXPORTS\n  DNSServiceRegister\n  DNSServiceRefDeallocate\n  TXTRecordCreate\n  TXTRecordSetValue\n  TXTRecordGetLength\n  TXTRecordGetBytesPtr\n  TXTRecordDeallocate\n' > /tmp/dnssd.def
 
-          gendef "$BONJOUR_DLL"
-          dlltool -d dnssd.def -l "$SHIM/Lib/x64/dnssd.lib" -D dnssd.dll
+          dlltool --output-lib "$SHIM/Lib/x64/dnssd.lib" \
+                  --def /tmp/dnssd.def \
+                  --dllname dnssd.dll
 
           echo "BONJOUR_SDK_HOME=$(cygpath -w "$SHIM")" >> "$GITHUB_ENV"
 
@@ -90,6 +62,7 @@ jobs:
         run: |
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
+            -DNO_MARCH_NATIVE=ON \
             -DPKG_CONFIG_EXECUTABLE="/mingw64/bin/pkg-config.exe"
           cmake --build build --parallel
 
@@ -98,24 +71,6 @@ jobs:
         run: |
           export BUILD_DIR="$(cygpath -u "$GITHUB_WORKSPACE")/build"
           bash deploy_windows.sh
-
-      - name: Copy Bonjour runtime DLL into package
-        shell: pwsh
-        run: |
-          Copy-Item $env:BONJOUR_DLL_WIN 'build\dnssd.dll' -Force
-
-      - name: Patch launcher env for stable playback defaults
-        shell: msys2 {0}
-        run: |
-          BAT="$(cygpath -u "$GITHUB_WORKSPACE")/build/uxplay.bat"
-          if [ ! -f "$BAT" ]; then
-            echo "uxplay.bat not found: $BAT"
-            exit 1
-          fi
-
-          if ! grep -q "GST_PLUGIN_FEATURE_RANK" "$BAT"; then
-            echo "set \"GST_PLUGIN_FEATURE_RANK=hlsdemux:0,nvh264dec:0,nvh265dec:0,wasapi2sink:0,wasapisink:0\"" >> "$BAT"
-          fi
 
       - name: Validate packaged runtime files
         shell: msys2 {0}
@@ -126,12 +81,12 @@ jobs:
           test -f "$BUILD_DIR/ca-bundle.crt"
           test -f "$BUILD_DIR/gstreamer-1.0/libexec/gst-plugin-scanner.exe"
           test -f "$BUILD_DIR/gio/modules/libgiognutls.dll"
-
           DLL_COUNT=$(find "$BUILD_DIR" -maxdepth 1 -type f -name "*.dll" | wc -l)
           if [ "$DLL_COUNT" -lt 80 ]; then
             echo "Unexpectedly low DLL count: $DLL_COUNT"
             exit 1
           fi
+          grep -q "GST_PLUGIN_FEATURE_RANK" "$BUILD_DIR/uxplay.bat"
 
       - name: Create ZIP archive
         shell: pwsh

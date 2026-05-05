@@ -139,6 +139,7 @@ set "GIO_USE_TLS=gnutls"
 set "SSL_CERT_FILE=%HERE%ca-bundle.crt"
 set "G_TLS_CA_FILE=%HERE%ca-bundle.crt"
 set "GST_DEBUG=*:1"
+set "GST_PLUGIN_FEATURE_RANK=hlsdemux:0,nvh264dec:0,nvh265dec:0,wasapi2sink:0,wasapisink:0"
 "%HERE%uxplay.exe" %*
 pause
 BATCHEOF

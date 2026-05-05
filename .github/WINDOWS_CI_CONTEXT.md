@@ -134,25 +134,27 @@ $BONJOUR_SDK_HOME/
       dnssd.lib     ← インポートライブラリ
 ```
 
-### CI での解決策：mdnsresponder シム
+### CI での解決策：dlltool による import stub 生成
 
-Apple の Bonjour SDK を CI に配置する代わりに、
-MSYS2 の **`mingw-w64-x86_64-mdnsresponder`** パッケージが提供するファイルを
-上記の構造に見立てたシムディレクトリとして作成する。
+> **注意**: `mingw-w64-x86_64-mdnsresponder` は MSYS2 公式リポジトリに**存在しない**。
+> MSYS2 に類似パッケージ (`mingw-w64-x86_64-libmicrodns`) はあるが dns_sd API 互換ではない。
 
-```bash
-# mdnsresponder がインストールするファイル
-/mingw64/include/dns_sd.h          ← dns_sd.h（Apple SDK と互換）
-/mingw64/lib/libdns_sd.dll.a       ← インポートライブラリ（.dll.a 形式）
-/mingw64/bin/libdns_sd.dll         ← ランタイム DLL
-```
+UxPlay の `lib/dnssd.c` は dns_sd の全関数（7個）を `GetProcAddress()` で動的ロードする。
+そのため import lib にはシンボルのスタブエントリがあれば十分で、
+実際の Bonjour をインストールせずに `dlltool` だけで生成できる。
 
 ```bash
-# シム作成スクリプト（windows-build.yml の "Create Bonjour SDK shim" ステップ）
+# dns_sd.h を Apple Open Source から取得（Apache 2.0 ライセンス）
 SHIM="$(cygpath -u "$GITHUB_WORKSPACE")/ci-bonjour-sdk"
 mkdir -p "$SHIM/Lib/x64" "$SHIM/Include"
-cp /mingw64/include/dns_sd.h "$SHIM/Include/"
-cp /mingw64/lib/libdns_sd.dll.a "$SHIM/Lib/x64/dnssd.lib"
+curl -fsSL \
+  "https://raw.githubusercontent.com/apple-oss-distributions/mDNSResponder/main/mDNSShared/dns_sd.h" \
+  -o "$SHIM/Include/dns_sd.h"
+
+# UxPlay が使う 7 シンボルの def ファイル → import lib を生成
+printf 'LIBRARY dnssd.dll\nEXPORTS\n  DNSServiceRegister\n  DNSServiceRefDeallocate\n  TXTRecordCreate\n  TXTRecordSetValue\n  TXTRecordGetLength\n  TXTRecordGetBytesPtr\n  TXTRecordDeallocate\n' > /tmp/dnssd.def
+dlltool --output-lib "$SHIM/Lib/x64/dnssd.lib" --def /tmp/dnssd.def --dllname dnssd.dll
+
 echo "BONJOUR_SDK_HOME=$(cygpath -w "$SHIM")" >> "$GITHUB_ENV"
 ```
 
@@ -160,8 +162,9 @@ echo "BONJOUR_SDK_HOME=$(cygpath -w "$SHIM")" >> "$GITHUB_ENV"
 
 - `cygpath -w` で MSYS2 パスを Windows パス形式に変換してから `BONJOUR_SDK_HOME` に設定する
   （cmake は `$ENV{BONJOUR_SDK_HOME}` を Windows パスとして扱うため）
-- `.dll.a` を `.lib` にリネームしても MinGW ld.exe はリンクできる
-- `libdns_sd.dll` 自体は `deploy_windows.sh` の `ldd` 収集ステップで自動的に同梱される
+- **dnssd.dll は配布物に含めない**（Apple ライセンス違反のため）
+- 実行時は System32 の dnssd.dll（Bonjour インストール済み環境）が GetProcAddress で使用される
+- ユーザーが Bonjour を持っていない場合: iTunes / Apple デバイスサポート / Bonjour for Windows（無料）いずれかが必要
 
 ---
 
