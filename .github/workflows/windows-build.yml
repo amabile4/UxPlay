@@ -21,8 +21,9 @@ jobs:
         uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
-          release: false
-          update: false
+          # Use the latest MSYS2 release and update packages to avoid stale runtime DLLs.
+          release: true
+          update: true
           cache: false
           install: >-
             mingw-w64-x86_64-gcc
@@ -36,8 +37,20 @@ jobs:
             mingw-w64-x86_64-gst-plugins-ugly
             mingw-w64-x86_64-gst-libav
             mingw-w64-x86_64-libplist
+            mingw-w64-x86_64-gnutls
             mingw-w64-x86_64-openssl
             ca-certificates
+
+      - name: Dump MSYS2 package versions (diagnostics)
+        shell: msys2 {0}
+        run: |
+          set -e
+          mkdir -p build
+          {
+            echo "# MSYS2 package versions"
+            date -u
+            pacman -Q | grep -E '^(mingw-w64-x86_64-(gcc|gcc-libs|libplist|gnutls|openssl|gstreamer|gst-plugins-base|gst-plugins-good|gst-plugins-bad|gst-plugins-ugly|gst-libav)|ca-certificates) '
+          } > build/msys2-package-versions.txt
 
       - name: Create Bonjour SDK shim (dlltool, no Bonjour install needed)
         shell: msys2 {0}
@@ -87,6 +100,24 @@ jobs:
             exit 1
           fi
           grep -q "GST_PLUGIN_FEATURE_RANK" "$BUILD_DIR/uxplay.bat"
+
+      - name: Dump packaged DLL manifest (diagnostics)
+        shell: msys2 {0}
+        run: |
+          set -e
+          BUILD_DIR="$(cygpath -u "$GITHUB_WORKSPACE")/build"
+          {
+            echo "# Top-level DLL manifest"
+            date -u
+            echo
+            for f in "$BUILD_DIR"/*.dll; do
+              [ -f "$f" ] || continue
+              b="$(basename "$f")"
+              src="$(ldd "$f" 2>/dev/null | grep '/mingw64/bin/' | head -n1 | awk '{print $3}')"
+              sha="$(sha256sum "$f" | awk '{print $1}')"
+              printf '%s sha256=%s source=%s\n' "$b" "$sha" "${src:-unknown}"
+            done | sort
+          } > "$BUILD_DIR/packaged-dll-manifest.txt"
 
       - name: Create ZIP archive
         shell: pwsh
