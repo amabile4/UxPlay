@@ -49,11 +49,16 @@ jobs:
       - name: Verify Bonjour runtime
         shell: pwsh
         run: |
-          $dll = 'C:\Program Files\Bonjour\dnssd.dll'
-          if (!(Test-Path $dll)) {
-            Write-Error "Bonjour dnssd.dll not found at $dll"
+          $candidates = @(
+            'C:\Program Files\Bonjour\dnssd.dll',
+            'C:\Program Files (x86)\Bonjour\dnssd.dll'
+          )
+          $dll = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $dll) {
+            Write-Error "Bonjour dnssd.dll not found in known locations"
             exit 1
           }
+          "BONJOUR_DLL_WIN=$dll" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Create Bonjour SDK shim from mdnsresponder
         shell: msys2 {0}
@@ -65,7 +70,7 @@ jobs:
             "https://raw.githubusercontent.com/apple-oss-distributions/mDNSResponder/main/mDNSShared/dns_sd.h" \
             -o "$SHIM/Include/dns_sd.h"
 
-          BONJOUR_DLL="/c/Program Files/Bonjour/dnssd.dll"
+          BONJOUR_DLL="$(cygpath -u "$BONJOUR_DLL_WIN")"
           if [ ! -f "$BONJOUR_DLL" ]; then
             echo "Bonjour DLL not found: $BONJOUR_DLL"
             exit 1
@@ -93,7 +98,7 @@ jobs:
       - name: Copy Bonjour runtime DLL into package
         shell: pwsh
         run: |
-          Copy-Item 'C:\Program Files\Bonjour\dnssd.dll' 'build\dnssd.dll' -Force
+          Copy-Item $env:BONJOUR_DLL_WIN 'build\dnssd.dll' -Force
 
       - name: Patch launcher env for stable playback defaults
         shell: msys2 {0}
