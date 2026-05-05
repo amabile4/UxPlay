@@ -36,69 +36,111 @@ static unsigned char X11_search_attempts = 0;
 
 #ifdef _WIN32
 #include <windows.h>
-static int win_airplay_w = 0;
-static int win_airplay_h = 0;
-static gboolean win_resize_pending = FALSE;
+static volatile LONG win_airplay_w = 0;
+static volatile LONG win_airplay_h = 0;
+static HANDLE win_resize_thread = NULL;
+static volatile BOOL win_resize_running = FALSE;
 
-static HWND win_find_gst_hwnd(void) {
-    return FindWindowW(L"GstD3D11VideoSinkWin32", NULL);
+struct win_enum_data {
+    DWORD pid;
+    HWND  hwnd;
+};
+
+static bool win_is_console(HWND hwnd) {
+    char cn[128] = {0};
+    if (hwnd == GetConsoleWindow()) return true;
+    GetClassNameA(hwnd, cn, sizeof(cn));
+    return strcmp(cn, "ConsoleWindowClass") == 0 ||
+           strcmp(cn, "CASCADIA_HOSTING_WINDOW_CLASS") == 0 ||
+           strcmp(cn, "CascadiaHostWindowClass") == 0 ||
+           strcmp(cn, "mintty") == 0;
 }
 
-/* Returns TRUE if the resize was applied; FALSE if it must be deferred. */
-static gboolean win_try_resize(int w, int h) {
-    if (w <= 0 || h <= 0) return TRUE;
-    HWND hwnd = win_find_gst_hwnd();
-    if (!hwnd) return FALSE;
-    /* Skip when title-bar-maximized */
-    if (IsZoomed(hwnd)) return FALSE;
-    /* Skip when d3d11videosink fullscreen (window covers full monitor) */
-    RECT wr;
-    GetWindowRect(hwnd, &wr);
-    MONITORINFO mi = {sizeof(mi)};
-    GetMonitorInfo(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mi);
-    if (wr.left == mi.rcMonitor.left && wr.top == mi.rcMonitor.top &&
-        wr.right == mi.rcMonitor.right && wr.bottom == mi.rcMonitor.bottom)
+static BOOL CALLBACK win_enum_proc(HWND hwnd, LPARAM lp) {
+    struct win_enum_data *d = (struct win_enum_data *) lp;
+    DWORD pid = 0;
+    GetWindowThreadProcessId(hwnd, &pid);
+    if (pid != d->pid || !IsWindowVisible(hwnd) || win_is_console(hwnd))
+        return TRUE;
+    LONG_PTR st = GetWindowLongPtr(hwnd, GWL_STYLE);
+    if ((st & WS_OVERLAPPEDWINDOW) || (st & WS_POPUP)) {
+        d->hwnd = hwnd;
         return FALSE;
-    /* Scale down to fit 90 % of work area while preserving aspect ratio */
-    int max_w = (mi.rcWork.right - mi.rcWork.left) * 9 / 10;
-    int max_h = (mi.rcWork.bottom - mi.rcWork.top) * 9 / 10;
-    if (w > max_w || h > max_h) {
-        double sw = (double)max_w / w, sh = (double)max_h / h;
-        double s = sw < sh ? sw : sh;
-        w = (int)(w * s);
-        h = (int)(h * s);
     }
-    /* Expand client rect to outer window rect */
-    LONG st = GetWindowLong(hwnd, GWL_STYLE);
-    LONG ex = GetWindowLong(hwnd, GWL_EXSTYLE);
-    RECT r = {0, 0, w, h};
-    AdjustWindowRectEx(&r, st, FALSE, ex);
-    int ww = r.right - r.left, wh = r.bottom - r.top;
-    /* Center on work area */
-    int cx = mi.rcWork.left + (mi.rcWork.right - mi.rcWork.left - ww) / 2;
-    int cy = mi.rcWork.top + (mi.rcWork.bottom - mi.rcWork.top - wh) / 2;
-    SetWindowPos(hwnd, NULL, cx, cy, ww, wh, SWP_NOZORDER | SWP_NOACTIVATE);
     return TRUE;
 }
 
-/* Periodic retry: called on the GLib main loop until the resize succeeds. */
-static gboolean win_retry_cb(gpointer data) {
-    if (win_try_resize(win_airplay_w, win_airplay_h)) {
-        win_resize_pending = FALSE;
-        return G_SOURCE_REMOVE;
+/* Find the GStreamer video window belonging to this process. */
+static HWND win_find_hwnd(void) {
+    HWND fg = GetForegroundWindow();
+    if (fg && !win_is_console(fg)) {
+        DWORD pid = 0;
+        GetWindowThreadProcessId(fg, &pid);
+        if (pid == GetCurrentProcessId()) return fg;
     }
-    return G_SOURCE_CONTINUE;
+    struct win_enum_data d = { GetCurrentProcessId(), NULL };
+    EnumWindows(win_enum_proc, (LPARAM) &d);
+    return d.hwnd;
 }
 
-/* Invoked on the GLib main loop from video_renderer_size(). */
-static gboolean win_schedule_resize(gpointer data) {
-    if (win_try_resize(win_airplay_w, win_airplay_h)) {
-        win_resize_pending = FALSE;
-    } else if (!win_resize_pending) {
-        win_resize_pending = TRUE;
-        g_timeout_add(250, win_retry_cb, NULL);
+/* Apply resize. Returns true when done (or no retry needed), false to retry. */
+static bool win_do_resize(void) {
+    LONG w = win_airplay_w, h = win_airplay_h;
+    if (w <= 0 || h <= 0) return true;
+    HWND hwnd = win_find_hwnd();
+    if (!hwnd) return false;
+    if (IsZoomed(hwnd)) return true;
+    MONITORINFO mi = {sizeof(mi)};
+    if (!GetMonitorInfo(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mi)) return true;
+    int max_w = (mi.rcWork.right - mi.rcWork.left) * 9 / 10;
+    int max_h = (mi.rcWork.bottom - mi.rcWork.top) * 9 / 10;
+    double scale = 1.0;
+    if (w > max_w) scale = (double) max_w / w;
+    if ((double) h * scale > max_h) scale = (double) max_h / h;
+    int cw = (int)((double) w * scale + 0.5); if (cw < 1) cw = 1;
+    int ch = (int)((double) h * scale + 0.5); if (ch < 1) ch = 1;
+    LONG_PTR st = GetWindowLongPtr(hwnd, GWL_STYLE);
+    LONG_PTR ex = GetWindowLongPtr(hwnd, GWL_EXSTYLE);
+    RECT r = {0, 0, cw, ch};
+    if (!AdjustWindowRectEx(&r, (DWORD) st, FALSE, (DWORD) ex)) return true;
+    int ww = r.right - r.left, wh = r.bottom - r.top;
+    int x = mi.rcWork.left + (mi.rcWork.right - mi.rcWork.left - ww) / 2;
+    int y = mi.rcWork.top + (mi.rcWork.bottom - mi.rcWork.top - wh) / 2;
+    SetWindowPos(hwnd, NULL, x, y, ww, wh,
+                 SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+    return true;
+}
+
+static DWORD WINAPI win_resize_thread_proc(LPVOID ignored) {
+    (void) ignored;
+    for (int i = 0; i < 20 && win_resize_running; i++) {
+        if (win_do_resize()) break;
+        Sleep(100);
     }
-    return FALSE;
+    win_resize_running = FALSE;
+    return 0;
+}
+
+static void win_schedule_resize(void) {
+    if (win_do_resize()) return;
+    if (win_resize_running) return;
+    if (win_resize_thread) {
+        WaitForSingleObject(win_resize_thread, 0);
+        CloseHandle(win_resize_thread);
+        win_resize_thread = NULL;
+    }
+    win_resize_running = TRUE;
+    win_resize_thread = CreateThread(NULL, 0, win_resize_thread_proc, NULL, 0, NULL);
+    if (!win_resize_thread) win_resize_running = FALSE;
+}
+
+static void win_stop_resize(void) {
+    win_resize_running = FALSE;
+    if (win_resize_thread) {
+        WaitForSingleObject(win_resize_thread, 1000);
+        CloseHandle(win_resize_thread);
+        win_resize_thread = NULL;
+    }
 }
 #endif  /* _WIN32 */
 
@@ -247,9 +289,9 @@ void video_renderer_size(float *f_width_source, float *f_height_source, float *f
     height = (unsigned short) *f_height;
     logger_log(logger, LOGGER_DEBUG, "begin video stream wxh = %dx%d; source %dx%d", width, height, width_source, height_source);
 #ifdef _WIN32
-    win_airplay_w = (int) width;
-    win_airplay_h = (int) height;
-    g_main_context_invoke(NULL, win_schedule_resize, NULL);
+    win_airplay_w = (LONG) width;
+    win_airplay_h = (LONG) height;
+    win_schedule_resize();
 #endif
 }
 
@@ -736,6 +778,7 @@ void video_renderer_stop() {
 #ifdef _WIN32
     win_airplay_w = 0;
     win_airplay_h = 0;
+    win_stop_resize();
 #endif
 }
 
