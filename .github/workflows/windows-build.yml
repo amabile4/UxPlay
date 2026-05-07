@@ -59,6 +59,11 @@ jobs:
           } > build/msys2-package-versions.txt
           cat build/msys2-package-versions.txt
 
+      - name: Run static GStreamer rank tests
+        shell: pwsh
+        run: |
+          .\tests\test_windows_gst_rank.ps1
+
       - name: Create Bonjour SDK shim (dlltool, no Bonjour install needed)
         shell: msys2 {0}
         run: |
@@ -98,6 +103,7 @@ jobs:
           BUILD_DIR="$(cygpath -u "$GITHUB_WORKSPACE")/build"
           test -f "$BUILD_DIR/uxplay.exe"
           test -f "$BUILD_DIR/uxplay.bat"
+          test -f "$BUILD_DIR/uxplay_gst_rank.ps1"
           test -f "$BUILD_DIR/ca-bundle.crt"
           test -f "$BUILD_DIR/gio/modules/libgiognutls.dll"
           DLL_COUNT=$(find "$BUILD_DIR" -maxdepth 1 -type f -name "*.dll" | wc -l)
@@ -105,7 +111,7 @@ jobs:
             echo "Unexpectedly low DLL count: $DLL_COUNT"
             exit 1
           fi
-          grep -q "GST_PLUGIN_FEATURE_RANK" "$BUILD_DIR/uxplay.bat"
+          grep -q "uxplay_gst_rank.ps1" "$BUILD_DIR/uxplay.bat"
 
       - name: Dump packaged DLL manifest (diagnostics)
         shell: msys2 {0}

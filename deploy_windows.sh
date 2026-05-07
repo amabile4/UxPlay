@@ -158,6 +158,8 @@ cp "$GIO_MODULE_SRC/libgiognutls.dll" "$BUILD_DIR/gio/modules/"
 echo "  copied: libgiognutls.dll"
 cp "$CA_BUNDLE_SRC" "$BUILD_DIR/"
 echo "  copied: ca-bundle.crt"
+cp "tools/windows/uxplay_gst_rank.ps1" "$BUILD_DIR/"
+echo "  copied: uxplay_gst_rank.ps1"
 
 echo ""
 echo "=== Step 4: ランチャーバッチファイルを作成 ==="
@@ -179,7 +181,9 @@ echo "=== Step 4: ランチャーバッチファイルを作成 ==="
     printf 'set "SSL_CERT_FILE=%%HERE%%ca-bundle.crt"\r\n'
     printf 'set "G_TLS_CA_FILE=%%HERE%%ca-bundle.crt"\r\n'
     printf 'set "GST_DEBUG=*:1"\r\n'
-    printf 'set "GST_PLUGIN_FEATURE_RANK=hlsdemux:0,nvh264dec:0,nvh265dec:0,wasapi2sink:0,wasapisink:0"\r\n'
+    printf 'set "UXPLAY_LAUNCH_ARGS=%%*"\r\n'
+    printf 'for /f "usebackq delims=" %%%%A in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%%HERE%%uxplay_gst_rank.ps1" -BundleRoot "%%HERE%%"`) do call %%%%A\r\n'
+    printf 'set "UXPLAY_LAUNCH_ARGS="\r\n'
     printf '"%%HERE%%uxplay.exe" %%*\r\n'
     printf 'pause\r\n'
 } > "$BUILD_DIR/uxplay.bat"
