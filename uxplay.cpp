@@ -3296,8 +3296,12 @@ int main (int argc, char *argv[]) {
         }	  
     }
 
-    if (start_dnssd(server_hw_addr, server_name)) {
-        cleanup();
+    if (!test_mode) {
+        if (start_dnssd(server_hw_addr, server_name)) {
+            cleanup();
+        }
+    } else {
+        LOGI("Test mode: skipping DNS-SD initialization");
     }
     if (start_raop_server(display, tcp, udp, debug_log)) {
         stop_dnssd();
@@ -3332,7 +3336,7 @@ int main (int argc, char *argv[]) {
         LOGI("Bluetooth LE beacon-based service discovery is possible: PID data written to %s", ble_filename.c_str());
     }
     
-    if (register_dnssd()) {
+    if (!test_mode && register_dnssd()) {
         stop_raop_server();
         stop_dnssd();
         cleanup();
