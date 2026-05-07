@@ -165,44 +165,6 @@ jobs:
       - name: Install test dependencies
         run: pip install -r tests/requirements.txt
 
-      - name: Start UxPlay in test mode
-        shell: pwsh
-        run: |
-          # uxplay.bat で環境変数(DLL パス等)を設定して起動する
-          # -p 7000 でRAOPポートを固定、-vs 0 でGUI ウィンドウ非表示(-hls との組み合わせ確認済み)
-          $proc = Start-Process cmd -ArgumentList '/c', 'build\uxplay.bat --test-mode --test-port 9999 -hls -n UxPlayTestDevice -p 7000 -vs 0 > uxplay_stdout.txt 2> uxplay_stderr.txt' -NoNewWindow -PassThru
-          echo "UxPlay PID: $($proc.Id)"
-          $deadline = (Get-Date).AddSeconds(30)
-          while ((Get-Date) -lt $deadline) {
-            try {
-              $status = Invoke-RestMethod -Uri "http://127.0.0.1:9999/test/status" -TimeoutSec 2
-              Write-Output "test/status became reachable: $($status | ConvertTo-Json -Compress)"
-              break
-            } catch {
-              Start-Sleep -Seconds 2
-            }
-          }
-
-          try {
-            $null = Invoke-RestMethod -Uri "http://127.0.0.1:9999/test/status" -TimeoutSec 2
-          } catch {
-            if (Test-Path uxplay_stdout.txt) {
-              Write-Output "--- uxplay_stdout.txt ---"
-              Get-Content uxplay_stdout.txt
-            }
-            if (Test-Path uxplay_stderr.txt) {
-              Write-Output "--- uxplay_stderr.txt ---"
-              Get-Content uxplay_stderr.txt
-            }
-            throw
-          }
-
-      - name: Verify test server reachable
-        shell: pwsh
-        run: |
-          $status = Invoke-RestMethod -Uri "http://127.0.0.1:9999/test/status" -TimeoutSec 10
-          Write-Output "test/status: $($status | ConvertTo-Json)"
-
       - name: Run regression tests (connectivity level)
         shell: pwsh
         run: |
@@ -210,7 +172,45 @@ jobs:
           $env:MOCK_HLS_PORT    = "8765"
           $env:UXPLAY_TEST_PORT = "9999"
           $env:PYTHONPATH       = "${{ github.workspace }}\tests"
-          python -m pytest tests/test_regression.py -v --timeout=60 -k "test_01 or test_02 or test_03"
+
+          # uxplay.bat で環境変数(DLL パス等)を設定して起動する
+          # -p 7000 でRAOPポートを固定、-vs 0 でGUI ウィンドウ非表示(-hls との組み合わせ確認済み)
+          $proc = Start-Process cmd -ArgumentList '/c', 'build\uxplay.bat --test-mode --test-port 9999 -hls -n UxPlayTestDevice -p 7000 -vs 0 > uxplay_stdout.txt 2> uxplay_stderr.txt' -NoNewWindow -PassThru
+          Write-Output "UxPlay PID: $($proc.Id)"
+
+          try {
+            $deadline = (Get-Date).AddSeconds(45)
+            $ready = $false
+            while ((Get-Date) -lt $deadline) {
+              try {
+                $status = Invoke-RestMethod -Uri "http://127.0.0.1:9999/test/status" -TimeoutSec 2
+                Write-Output "test/status became reachable: $($status | ConvertTo-Json -Compress)"
+                $ready = $true
+                break
+              } catch {
+                Start-Sleep -Seconds 2
+              }
+            }
+
+            if (-not $ready) {
+              if (Test-Path uxplay_stdout.txt) {
+                Write-Output "--- uxplay_stdout.txt ---"
+                Get-Content uxplay_stdout.txt
+              }
+              if (Test-Path uxplay_stderr.txt) {
+                Write-Output "--- uxplay_stderr.txt ---"
+                Get-Content uxplay_stderr.txt
+              }
+              throw "UxPlay test server did not become reachable in time"
+            }
+
+            python -m pytest tests/test_regression.py -v --timeout=60 -k "test_01 or test_02 or test_03"
+          }
+          finally {
+            if ($proc -and -not $proc.HasExited) {
+              Stop-Process -Id $proc.Id -Force
+            }
+          }
 
       - name: Upload logs on failure
         if: failure()
