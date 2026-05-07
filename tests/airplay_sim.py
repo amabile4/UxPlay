@@ -18,6 +18,7 @@ import argparse
 import socket
 import time
 import sys
+import plistlib
 import requests
 
 
@@ -151,20 +152,27 @@ def simulate_airplay_hls(host: str, raop_port: int, hls_url: str, test_api_port:
     # --- Step 2: POST /play via HTTP ---
     # UxPlay の HLS モードでは RTSP ではなく HTTP で /play を受け付ける
     print("[sim] Step 2: POST /play")
-    import plistlib
     play_body = plistlib.dumps({
         "Content-Location": hls_url,
         "clientProcName": "YouTube",
         "Start-Position-Seconds": 0.0,
-    })
-    code, body = send_http_request(host, raop_port, "POST", "/play", {
-        "Content-Type": "application/x-apple-binary-plist",
-        "User-Agent": "AirPlay/540.31",
-    }, body=play_body)
-    if code not in (200, 204):
-        print(f"[sim] WARNING: POST /play returned {code}")
-    else:
-        print(f"[sim] POST /play → {code}")
+    }, fmt=plistlib.FMT_BINARY)
+    try:
+        resp = requests.post(
+            f"http://{host}:{raop_port}/play",
+            data=play_body,
+            headers={
+                "Content-Type": "application/x-apple-binary-plist",
+                "User-Agent": "AirPlay/540.31",
+            },
+            timeout=15,
+        )
+        if resp.status_code not in (200, 204):
+            print(f"[sim] WARNING: POST /play returned {resp.status_code}")
+        else:
+            print(f"[sim] POST /play → {resp.status_code}")
+    except Exception as e:
+        print(f"[sim] WARNING: POST /play failed: {e}")
 
     # --- Step 3: ステータス確認 ---
     print("[sim] Step 3: Waiting for UxPlay to start HLS playback...")
@@ -173,10 +181,13 @@ def simulate_airplay_hls(host: str, raop_port: int, hls_url: str, test_api_port:
     # --- Step 4: GET /playback_info ---
     print("[sim] Step 4: GET /playback_info")
     for _ in range(3):
-        code, body = send_http_request(host, raop_port, "GET", "/playback_info", {
-            "User-Agent": "AirPlay/540.31",
-        })
-        print(f"[sim] GET /playback_info → {code} ({len(body)} bytes)")
+        try:
+            code, body = send_http_request(host, raop_port, "GET", "/playback_info", {
+                "User-Agent": "AirPlay/540.31",
+            }, timeout=5)
+            print(f"[sim] GET /playback_info → {code} ({len(body)} bytes)")
+        except Exception as e:
+            print(f"[sim] WARNING: GET /playback_info failed: {e}")
         time.sleep(1)
 
     # --- Step 5: test/status 確認 ---
@@ -189,7 +200,10 @@ def simulate_airplay_hls(host: str, raop_port: int, hls_url: str, test_api_port:
 
     # --- Step 6: POST /stop ---
     print("[sim] Step 6: POST /stop")
-    send_http_request(host, raop_port, "POST", "/stop", {"User-Agent": "AirPlay/540.31"})
+    try:
+        send_http_request(host, raop_port, "POST", "/stop", {"User-Agent": "AirPlay/540.31"}, timeout=5)
+    except Exception as e:
+        print(f"[sim] WARNING: POST /stop failed: {e}")
 
     session.close()
     print("[sim] Simulation complete")
