@@ -168,7 +168,7 @@ jobs:
       - name: Run regression tests (connectivity level)
         shell: pwsh
         run: |
-          $env:UXPLAY_RAOP_PORT = "17000"
+          $env:UXPLAY_RAOP_PORT = "17001"
           $env:MOCK_HLS_PORT    = "8765"
           $env:UXPLAY_TEST_PORT = "9999"
           $env:PYTHONPATH       = "${{ github.workspace }}\tests"
