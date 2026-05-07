@@ -160,6 +160,8 @@ cp "$CA_BUNDLE_SRC" "$BUILD_DIR/"
 echo "  copied: ca-bundle.crt"
 cp "tools/windows/uxplay_gst_rank.ps1" "$BUILD_DIR/"
 echo "  copied: uxplay_gst_rank.ps1"
+cp "tools/windows/check_bonjour_safety.ps1" "$BUILD_DIR/"
+echo "  copied: check_bonjour_safety.ps1"
 
 echo ""
 echo "=== Step 4: ランチャーバッチファイルを作成 ==="

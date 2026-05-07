@@ -2010,6 +2010,10 @@ static int start_dnssd(std::vector<char> hw_addr, std::string name) {
     dnssd = dnssd_init(name.c_str(), strlen(name.c_str()), hw_addr.data(), hw_addr.size(), &dnssd_error, pin_pw);
     if (dnssd_error) {
         LOGE("Could not initialize dnssd library!: error %d", dnssd_error);
+#ifdef _WIN32
+        LOGI("Windows note: UxPlay loads dnssd.dll (DNSService APIs) and does not directly load mdnsNSP.dll");
+        LOGI("If Bonjour Namespace Provider (mdnsNSP.dll) is blocked by LSA policy, UxPlay may still run when dnssd.dll is available");
+#endif
         return 1;
     }
 
@@ -2855,6 +2859,8 @@ static int start_raop_server (unsigned short display[5], unsigned short tcp[3], 
         raop_set_dnssd(raop, dnssd);
     } else if (test_mode) {
         LOGI("Test mode: continuing without DNS-SD in RAOP context");
+    } else if (!ble_filename.empty()) {
+        LOGI("Bluetooth LE beacon mode: continuing without DNS-SD binding in RAOP context");
     } else {
         LOGE("raop_set failed to set dnssd");
         return -2;
@@ -3296,7 +3302,11 @@ int main (int argc, char *argv[]) {
 
     if (!test_mode) {
         if (start_dnssd(server_hw_addr, server_name)) {
-            cleanup();
+            if (ble_filename.empty()) {
+                cleanup();
+            } else {
+                LOGI("Continuing without DNS-SD because -ble is enabled");
+            }
         }
     } else {
         LOGI("Test mode: skipping DNS-SD initialization");
@@ -3334,7 +3344,7 @@ int main (int argc, char *argv[]) {
         LOGI("Bluetooth LE beacon-based service discovery is possible: PID data written to %s", ble_filename.c_str());
     }
     
-    if (!test_mode && register_dnssd()) {
+    if (!test_mode && dnssd && register_dnssd()) {
         stop_raop_server();
         stop_dnssd();
         cleanup();

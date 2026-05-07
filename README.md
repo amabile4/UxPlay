@@ -14,6 +14,16 @@
 > - [iTunes for Windows](https://support.apple.com/ja-jp/111900)（Bonjour 同梱）
 > - [Bonjour Print Services for Windows](https://support.apple.com/ja-jp/106380)（単体インストーラー）
 > - Apple デバイスサポート等の Apple ソフトウェアがインストール済みの場合も可
+>
+> **Windows 11 の LSA 警告 (`mdnsNSP.dll` ブロック) について:**
+> - UxPlay が直接使うのは `dnssd.dll`（DNSService API）です。
+> - UxPlay は `mdnsNSP.dll` を直接ロードしません。
+> - したがって `dnssd.dll` が利用可能なら、`mdnsNSP.dll` ブロック警告があっても UxPlay は動作可能です。
+> - セキュリティレベルを下げる設定変更（LSA 保護無効化など）は推奨しません。
+>
+> 状態確認は次を実行してください:
+>
+> `powershell -NoProfile -ExecutionPolicy Bypass -File tools/windows/check_bonjour_safety.ps1`
 
 ---
 

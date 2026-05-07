@@ -104,6 +104,7 @@ jobs:
           test -f "$BUILD_DIR/uxplay.exe"
           test -f "$BUILD_DIR/uxplay.bat"
           test -f "$BUILD_DIR/uxplay_gst_rank.ps1"
+          test -f "$BUILD_DIR/check_bonjour_safety.ps1"
           test -f "$BUILD_DIR/ca-bundle.crt"
           test -f "$BUILD_DIR/gio/modules/libgiognutls.dll"
           DLL_COUNT=$(find "$BUILD_DIR" -maxdepth 1 -type f -name "*.dll" | wc -l)
