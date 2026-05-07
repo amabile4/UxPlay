@@ -168,14 +168,14 @@ jobs:
       - name: Run regression tests (connectivity level)
         shell: pwsh
         run: |
-          $env:UXPLAY_RAOP_PORT = "7000"
+          $env:UXPLAY_RAOP_PORT = "17000"
           $env:MOCK_HLS_PORT    = "8765"
           $env:UXPLAY_TEST_PORT = "9999"
           $env:PYTHONPATH       = "${{ github.workspace }}\tests"
 
           # uxplay.bat で環境変数(DLL パス等)を設定して起動する
-          # -p 7000 でRAOPポートを固定、-vs 0 でGUI ウィンドウ非表示(-hls との組み合わせ確認済み)
-          $proc = Start-Process cmd -ArgumentList '/c', 'build\uxplay.bat --test-mode --test-port 9999 -hls -n UxPlayTestDevice -p 7000 -vs 0 > uxplay_stdout.txt 2> uxplay_stderr.txt' -NoNewWindow -PassThru
+          # -p 17000 でRAOPポートを固定、-vs 0 でGUI ウィンドウ非表示(-hls との組み合わせ確認済み)
+          $proc = Start-Process cmd -ArgumentList '/c', 'build\uxplay.bat --test-mode --test-port 9999 -hls -n UxPlayTestDevice -p 17000 -vs 0 > uxplay_stdout.txt 2> uxplay_stderr.txt' -NoNewWindow -PassThru
           Write-Output "UxPlay PID: $($proc.Id)"
 
           try {
