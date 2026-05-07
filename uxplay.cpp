@@ -2273,11 +2273,7 @@ extern "C" void conn_destroy (void *cls) {
         g_test_status.open_connections = open_connections;
         if (open_connections == 0) {
             g_test_status.hls_playing = false;
-            g_test_status.hls_url[0] = '\0';
-            g_test_status.video_codec[0] = '\0';
-            g_test_status.audio_codec[0] = '\0';
-            g_test_status.width = 0;
-            g_test_status.height = 0;
+            /* keep last received HLS URL/client identity for post-playback test assertions */
             g_test_status.rate = 0.0f;
             g_test_status.position = 0.0;
             g_test_status.duration = 0.0;
