@@ -2857,6 +2857,8 @@ static int start_raop_server (unsigned short display[5], unsigned short tcp[3], 
 
     if (dnssd) {
         raop_set_dnssd(raop, dnssd);
+    } else if (test_mode) {
+        LOGI("Test mode: continuing without DNS-SD in RAOP context");
     } else {
         LOGE("raop_set failed to set dnssd");
         return -2;
