@@ -69,6 +69,7 @@
 #include "renderers/audio_renderer.h"
 #include "renderers/mux_renderer.h"
 #include "renderers/playback_info.h"
+#include "lib/test_httpd.h"
 #ifdef DBUS
 #include <dbus/dbus.h>
 #endif
@@ -179,8 +180,13 @@ static bool h265_support = false;
 static int n_video_renderers = 0;
 static int n_audio_renderers = 0;
 static bool hls_support = false;
+static bool waiting_for_hls_play = false;
 static std::string lang = "";
 static std::string url = "";
+static bool test_mode = false;
+static unsigned short test_port = 9999;
+static test_httpd_t *g_test_httpd = nullptr;
+static test_status_t g_test_status;
 static guint gst_x11_window_id = 0;
 static guint video_eos_watch_id = 0;
 static guint progress_id = 0;
@@ -676,6 +682,9 @@ static void main_loop()  {
     monitor_progress = false;
     reset_loop = false;
     reset_httpd = false;
+    if (hls_support && !preserve_connections) {
+        waiting_for_hls_play = true;
+    }
     preserve_connections = false;
     n_video_renderers = 0;
     n_audio_renderers = 0;
@@ -1011,6 +1020,9 @@ static void print_info (char *name) {
     printf("-v        Displays version information\n");
     printf("-h        Displays this help\n");
     printf("-rc fn    Read startup options from file \"fn\" instead of ~/.uxplayrc, etc\n");
+    printf("--test-mode        Enable test HTTP status server (for automated testing)\n");
+    printf("--test-port n      Port for test HTTP server (default: 9999)\n");
+    printf("                   Access: GET http://127.0.0.1:9999/test/status\n");
     printf("Startup options in $UXPLAYRC, ~/.uxplayrc, or ~/.config/uxplayrc are\n");
     printf("applied first (command-line options may modify them): format is one \n");
     printf("option per line, no initial \"-\"; lines starting with \"#\" are ignored.\n");
@@ -1729,6 +1741,18 @@ static void parse_arguments (int argc, char *argv[]) {
                 }
                 playbin_version = (guint) n;
             }
+        } else if (arg == "--test-mode") {
+            test_mode = true;
+        } else if (arg == "--test-port") {
+            if (i < argc - 1) {
+                unsigned int p = 9999;
+                if (get_value(argv[++i], &p) && p > 0 && p < 65536) {
+                    test_port = (unsigned short) p;
+                } else {
+                    fprintf(stderr, "invalid \"--test-port %s\"\n", argv[i]);
+                    exit(1);
+                }
+            }
         } else if (arg == "-lang") {
             lang.erase();
             if (i < argc - 1 && *argv[i+1] != '-') {
@@ -2118,6 +2142,7 @@ static bool check_blocked_client(char *deviceid) {
 //to be simplified
 
 extern "C" void video_reset(void *cls, reset_type_t type) {
+    waiting_for_hls_play = false;
     switch (type) {
     case RESET_TYPE_NOHOLD:
         LOGD("video_reset: type = NoHold");
@@ -2180,6 +2205,11 @@ extern "C" void video_reset(void *cls, reset_type_t type) {
 extern "C" int video_set_codec(void *cls, video_codec_t codec) {
     bool video_is_h265 = (codec == VIDEO_CODEC_H265);
     playback_info_set_video_codec(g_playback_info, video_is_h265 ? 1 : 0);
+    if (g_test_httpd) {
+        snprintf(g_test_status.video_codec, sizeof(g_test_status.video_codec),
+                 "%s", video_is_h265 ? "H.265" : "H.264");
+        test_httpd_update(g_test_httpd, &g_test_status);
+    }
     if (mux_to_file) {
         mux_renderer_choose_video_codec(video_is_h265);
     }
@@ -2229,12 +2259,31 @@ extern "C" void conn_init (void *cls) {
     open_connections++;
     LOGD("Open connections: %i", open_connections);
     //video_renderer_update_background(1);
+    if (g_test_httpd) {
+        g_test_status.open_connections = open_connections;
+        test_httpd_update(g_test_httpd, &g_test_status);
+    }
 }
 
 extern "C" void conn_destroy (void *cls) {
     //video_renderer_update_background(-1);
     open_connections--;
     LOGD("Open connections: %i", open_connections);
+    if (g_test_httpd) {
+        g_test_status.open_connections = open_connections;
+        if (open_connections == 0) {
+            g_test_status.hls_playing = false;
+            g_test_status.hls_url[0] = '\0';
+            g_test_status.video_codec[0] = '\0';
+            g_test_status.audio_codec[0] = '\0';
+            g_test_status.width = 0;
+            g_test_status.height = 0;
+            g_test_status.rate = 0.0f;
+            g_test_status.position = 0.0;
+            g_test_status.duration = 0.0;
+        }
+        test_httpd_update(g_test_httpd, &g_test_status);
+    }
     if (open_connections == 0) {
         playback_info_clear(g_playback_info);
         remote_clock_offset = 0;
@@ -2461,6 +2510,12 @@ extern "C" void audio_get_format (void *cls, unsigned char *ct, unsigned short *
     audio_type = type;
     
     playback_info_set_audio_codec(g_playback_info, *ct);
+    if (g_test_httpd) {
+        static const char *ct_names[] = {"?", "PCM", "ALAC", "?", "AAC-LC", "?", "?", "?", "AAC-ELD"};
+        const char *ct_name = (*ct < 9) ? ct_names[*ct] : "?";
+        snprintf(g_test_status.audio_codec, sizeof(g_test_status.audio_codec), "%s", ct_name);
+        test_httpd_update(g_test_httpd, &g_test_status);
+    }
     if (use_audio) {
       audio_renderer_start(ct);
     }
@@ -2479,6 +2534,11 @@ extern "C" void audio_get_format (void *cls, unsigned char *ct, unsigned short *
 
 extern "C" void video_report_size(void *cls, float *width_source, float *height_source, float *width, float *height) {
     playback_info_set_resolution(g_playback_info, (int)*width, (int)*height);
+    if (g_test_httpd) {
+        g_test_status.width  = (int)*width;
+        g_test_status.height = (int)*height;
+        test_httpd_update(g_test_httpd, &g_test_status);
+    }
     if (use_video) {
         video_renderer_size(width_source, height_source, width, height);
     }
@@ -2594,6 +2654,7 @@ extern "C" bool check_register(void *cls, const char *client_pk) {
 /* control  callbacks for video player (unimplemented) */
 
 extern "C" void on_video_play(void *cls, const char* location, const float start_position) {
+    waiting_for_hls_play = false;
     /* start_position needs to be implemented */
     video_renderer_set_start(start_position);
     url.erase();
@@ -2601,6 +2662,17 @@ extern "C" void on_video_play(void *cls, const char* location, const float start
     relaunch_video = true;
     preserve_connections = true;
     LOGI("********************on_video_play: location = %s*** start position %f ********************", url.c_str(), start_position);
+    if (g_test_httpd) {
+        g_test_status.hls_playing = true;
+        snprintf(g_test_status.hls_url, sizeof(g_test_status.hls_url), "%s", location);
+        /* clientProcName は http_handlers.h 内で解析済みのため、URLドメインで YouTube を判定する */
+        if (strstr(location, "googlevideo.com") || strstr(location, "youtube.com")) {
+            snprintf(g_test_status.client_proc_name, sizeof(g_test_status.client_proc_name), "YouTube");
+        } else {
+            snprintf(g_test_status.client_proc_name, sizeof(g_test_status.client_proc_name), "Unknown");
+        }
+        test_httpd_update(g_test_httpd, &g_test_status);
+    }
     video_reset(cls, RESET_TYPE_ON_VIDEO_PLAY);
 }
 
@@ -2612,7 +2684,11 @@ extern "C" void on_video_scrub(void *cls, const float position) {
 extern "C" void on_video_rate(void *cls, const float rate) {
     LOGI("on_video_rate = %7.5f\n", rate);
     if (rate == 1.0f) {
-        video_renderer_resume();
+        if (waiting_for_hls_play) {
+            LOGI("on_video_rate: waiting for on_video_play, skipping resume\n");
+        } else {
+            video_renderer_resume();
+        }
     } else if (rate ==  0.0f) {
         video_renderer_pause();
     } else  {
@@ -2632,10 +2708,18 @@ extern "C" float on_video_playlist_remove (void *cls) {
     return (float) position;
 }
 
- extern "C" void on_video_stop(void *cls) {
+extern "C" void on_video_stop(void *cls) {
     LOGI("**************************on_video_stop\n");
     video_renderer_hls_ready();
- }
+    if (hls_support) {
+        waiting_for_hls_play = true;
+    }
+    if (g_test_httpd) {
+        g_test_status.hls_playing = false;
+        g_test_status.rate = 0.0f;
+        test_httpd_update(g_test_httpd, &g_test_status);
+    }
+}
 
 extern "C" void on_video_acquire_playback_info (void *cls, playback_info_t *playback_info) {
     int buffering_level;
@@ -2660,6 +2744,12 @@ extern "C" void on_video_acquire_playback_info (void *cls, playback_info_t *play
     }
 #endif
     
+    if (g_test_httpd) {
+        g_test_status.rate     = playback_info->rate;
+        g_test_status.position = playback_info->position;
+        g_test_status.duration = playback_info->duration;
+        test_httpd_update(g_test_httpd, &g_test_status);
+    }
     if (!still_playing) {
         LOGI(" video has finished, %f", playback_info->position);
         playback_info->position = -1.0;
@@ -3154,6 +3244,7 @@ int main (int argc, char *argv[]) {
                             videosink_options.c_str(), fullscreen, video_sync, h265_support,
                             render_coverart, playbin_version, NULL);
         video_renderer_start();
+        video_renderer_set_playback_info(g_playback_info);
 #ifdef __OpenBSD__
     } else {
         if (pledge("stdio rpath wpath cpath inet unix prot_exec", NULL) == -1) {
@@ -3211,6 +3302,16 @@ int main (int argc, char *argv[]) {
     if (start_raop_server(display, tcp, udp, debug_log)) {
         stop_dnssd();
         cleanup();
+    }
+
+    if (test_mode) {
+        memset(&g_test_status, 0, sizeof(g_test_status));
+        g_test_httpd = test_httpd_start(test_port);
+        if (g_test_httpd) {
+            LOGI("Test HTTP status server running at http://127.0.0.1:%d/test/status", test_port);
+        } else {
+            LOGE("Failed to start test HTTP server on port %d", test_port);
+        }
     }
 
     if (lang.length() > 1) {

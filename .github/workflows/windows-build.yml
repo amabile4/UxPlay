@@ -139,6 +139,88 @@ jobs:
           path: uxplay-windows.zip
           retention-days: 30
 
+  test:
+    needs: build
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: uxplay-windows-${{ github.ref_name }}-${{ github.sha }}
+          path: artifact
+
+      - name: Extract artifact
+        shell: pwsh
+        run: Expand-Archive artifact\uxplay-windows.zip -DestinationPath build
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install test dependencies
+        run: pip install -r tests/requirements.txt
+
+      - name: Start UxPlay in test mode
+        shell: pwsh
+        run: |
+          # uxplay.bat で環境変数(DLL パス等)を設定して起動する
+          # -p 7000 でRAOPポートを固定、-vs 0 でGUI ウィンドウ非表示(-hls との組み合わせ確認済み)
+          $proc = Start-Process cmd -ArgumentList '/c', 'build\uxplay.bat --test-mode --test-port 9999 -hls -n UxPlayTestDevice -p 7000 -vs 0 > uxplay_stdout.txt 2> uxplay_stderr.txt' -NoNewWindow -PassThru
+          echo "UxPlay PID: $($proc.Id)"
+          $deadline = (Get-Date).AddSeconds(30)
+          while ((Get-Date) -lt $deadline) {
+            try {
+              $status = Invoke-RestMethod -Uri "http://127.0.0.1:9999/test/status" -TimeoutSec 2
+              Write-Output "test/status became reachable: $($status | ConvertTo-Json -Compress)"
+              break
+            } catch {
+              Start-Sleep -Seconds 2
+            }
+          }
+
+          try {
+            $null = Invoke-RestMethod -Uri "http://127.0.0.1:9999/test/status" -TimeoutSec 2
+          } catch {
+            if (Test-Path uxplay_stdout.txt) {
+              Write-Output "--- uxplay_stdout.txt ---"
+              Get-Content uxplay_stdout.txt
+            }
+            if (Test-Path uxplay_stderr.txt) {
+              Write-Output "--- uxplay_stderr.txt ---"
+              Get-Content uxplay_stderr.txt
+            }
+            throw
+          }
+
+      - name: Verify test server reachable
+        shell: pwsh
+        run: |
+          $status = Invoke-RestMethod -Uri "http://127.0.0.1:9999/test/status" -TimeoutSec 10
+          Write-Output "test/status: $($status | ConvertTo-Json)"
+
+      - name: Run regression tests (connectivity level)
+        shell: pwsh
+        run: |
+          $env:UXPLAY_RAOP_PORT = "7000"
+          $env:MOCK_HLS_PORT    = "8765"
+          $env:UXPLAY_TEST_PORT = "9999"
+          $env:PYTHONPATH       = "${{ github.workspace }}\tests"
+          python -m pytest tests/test_regression.py -v --timeout=60 -k "test_01 or test_02 or test_03"
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: uxplay-test-logs
+          path: |
+            uxplay_stdout.txt
+            uxplay_stderr.txt
+
       - name: Publish ZIP to rolling release
         uses: softprops/action-gh-release@v2
         with:
@@ -155,7 +237,7 @@ jobs:
             **⚠️ 要件:** Bonjour for Windows が必要です（iTunes または [Bonjour Print Services](https://support.apple.com/ja-jp/106380) でインストール）
 
             Built from `${{ github.ref_name }}` @ `${{ github.sha }}`
-          files: uxplay-windows.zip
+          files: artifact/uxplay-windows.zip
           overwrite_files: true
           fail_on_unmatched_files: true
           draft: false

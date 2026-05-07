@@ -75,6 +75,8 @@ bool video_get_playback_info(double *duration, double *position, double *seek_st
 int video_renderer_choose_codec (bool video_is_jpeg, bool video_is_h265);
 unsigned int video_renderer_listen(void *loop, int id);
 bool video_renderer_eos_watch();
+typedef struct playback_info_s playback_info_t;
+void video_renderer_set_playback_info(playback_info_t *info);
 #ifdef __cplusplus
 }
 #endif

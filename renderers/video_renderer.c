@@ -20,9 +20,11 @@
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
  */
 
+#include <math.h>
 #include <gst/gst.h>
 #include <gst/app/gstappsrc.h>
 #include "video_renderer.h"
+#include "playback_info.h"
 
 #define SECOND_IN_NSECS 1000000000UL
 #define SECOND_IN_MICROSECS 1000000
@@ -182,6 +184,7 @@ static int type_264 = 0;
 static int type_265 = 0;
 static int type_hls = 0;
 static int type_jpeg = 0;
+static playback_info_t *g_hls_playback_info = NULL;
 
 typedef enum {
   //GST_PLAY_FLAG_VIDEO         = (1 << 0),
@@ -359,6 +362,9 @@ void video_renderer_init(logger_t *render_logger, const char *server_name, video
     GstCaps *caps = NULL;
     bool rtp = (bool) strlen(rtp_pipeline);
     hls_video = (uri != NULL);
+    if (g_hls_playback_info) {
+        playback_info_set_hls_mode(g_hls_playback_info, hls_video);
+    }
     /* videosink choices that are auto */
     auto_videosink = (strstr(videosink, "autovideosink") || strstr(videosink, "fpsdisplaysink"));
 
@@ -768,10 +774,20 @@ uint64_t video_renderer_render_buffer(unsigned char* data, int *data_len, int *n
 void video_renderer_flush() {
 }
 
+void video_renderer_set_playback_info(playback_info_t *info) {
+    g_hls_playback_info = info;
+    if (info && hls_video) {
+        playback_info_set_hls_mode(info, true);
+    }
+}
+
 void video_renderer_hls_ready() {
+    if (g_hls_playback_info) {
+        playback_info_clear(g_hls_playback_info);
+    }
     GstState state;
     GstStateChangeReturn ret;
-    if (renderer && hls_video) {
+    if (renderer && renderer->pipeline && hls_video) {
         logger_log(logger, LOGGER_DEBUG,"video_renderer_hls_ready");
         ret = gst_element_set_state (renderer->pipeline, GST_STATE_READY);
         logger_log(logger, LOGGER_DEBUG,"pipeline_state_change_return: %s",
@@ -872,8 +888,10 @@ void video_renderer_destroy() {
     for (int i = 0; i < n_renderers; i++) {
         if (renderer_type[i]) {
             video_renderer_destroy_instance(renderer_type[i]);
+            renderer_type[i] = NULL;
         }
     }
+    renderer = NULL;
 }
 
 static void get_stream_status_name(GstStreamStatusType type, char *name, size_t len) {
@@ -981,15 +999,34 @@ static gboolean gstreamer_video_pipeline_bus_callback(GstBus *bus, GstMessage *m
         }
     }
 
-    if (hls_video && !GST_CLOCK_TIME_IS_VALID(hls_duration)) {
+    if (renderer && renderer->pipeline && hls_video && !GST_CLOCK_TIME_IS_VALID(hls_duration)) {
         gst_element_query_duration (renderer->pipeline, GST_FORMAT_TIME, &hls_duration);
     }
 
-    if (hls_requested_start_position && hls_seek_enabled) {
+    if (renderer && renderer->pipeline && hls_requested_start_position && hls_seek_enabled) {
         hls_video_seek_to_start_position(renderer->pipeline);
     }
 
     switch (GST_MESSAGE_TYPE (message)) {
+    case GST_MESSAGE_TAG: {
+        if (hls_video && g_hls_playback_info) {
+            GstTagList *tags = NULL;
+            gst_message_parse_tag(message, &tags);
+            if (tags) {
+                gchar *vcodec = NULL, *acodec = NULL;
+                if (gst_tag_list_get_string(tags, GST_TAG_VIDEO_CODEC, &vcodec)) {
+                    playback_info_set_video_codec_str(g_hls_playback_info, vcodec);
+                    g_free(vcodec);
+                }
+                if (gst_tag_list_get_string(tags, GST_TAG_AUDIO_CODEC, &acodec)) {
+                    playback_info_set_audio_codec_str(g_hls_playback_info, acodec);
+                    g_free(acodec);
+                }
+                gst_tag_list_unref(tags);
+            }
+        }
+        break;
+    }
     case GST_MESSAGE_DURATION:
         hls_duration = GST_CLOCK_TIME_NONE;
         break;
@@ -1019,6 +1056,12 @@ static gboolean gstreamer_video_pipeline_bus_callback(GstBus *bus, GstMessage *m
         gboolean closed_window = FALSE;
         gst_message_parse_error (message, &err, &debug);
         logger_log(logger, LOGGER_INFO, "GStreamer error (video): %s %s", GST_MESSAGE_SRC_NAME(message),err->message);
+        if (hls_video) {
+            g_print("[HLS] Error in %s: %s\n", GST_MESSAGE_SRC_NAME(message), err->message);
+            if (g_hls_playback_info) {
+                playback_info_print_hls_state(g_hls_playback_info);
+            }
+        }
         if (strstr(err->message, "Output window was closed")) {
             closed_window = TRUE;
         }
@@ -1081,6 +1124,58 @@ static gboolean gstreamer_video_pipeline_bus_callback(GstBus *bus, GstMessage *m
                 g_printerr ("Seeking query failed.");
             }
             gst_query_unref (query);
+
+            if (g_hls_playback_info) {
+                /* デコーダーを先に記録してから解像度出力する（set_resolution が印字するため） */
+                GstIterator *iter = gst_bin_iterate_recurse(GST_BIN(renderer->pipeline));
+                GValue item = G_VALUE_INIT;
+                while (gst_iterator_next(iter, &item) == GST_ITERATOR_OK) {
+                    GstElement *el = GST_ELEMENT(g_value_get_object(&item));
+                    GstElementFactory *factory = gst_element_get_factory(el);
+                    if (factory) {
+                        const char *klass = gst_element_factory_get_klass(factory);
+                        if (klass && strstr(klass, "Decoder/Video")) {
+                            const char *fname = gst_plugin_feature_get_name(
+                                                    GST_PLUGIN_FEATURE(factory));
+                            playback_info_set_hls_decoder(g_hls_playback_info,
+                                                          fname ? fname : GST_OBJECT_NAME(el));
+                            g_value_unset(&item);
+                            break;
+                        }
+                    }
+                    g_value_unset(&item);
+                }
+                gst_iterator_free(iter);
+
+                GstElement *vsink = NULL;
+                g_object_get(renderer->pipeline, "video-sink", &vsink, NULL);
+                if (vsink) {
+                    GstPad *pad = gst_element_get_static_pad(vsink, "sink");
+                    if (!pad) {
+                        GstIterator *it = gst_element_iterate_sink_pads(vsink);
+                        GValue val = G_VALUE_INIT;
+                        if (gst_iterator_next(it, &val) == GST_ITERATOR_OK) {
+                            pad = GST_PAD(g_value_dup_object(&val));
+                            g_value_unset(&val);
+                        }
+                        gst_iterator_free(it);
+                    }
+                    if (pad) {
+                        GstCaps *caps = gst_pad_get_current_caps(pad);
+                        if (caps) {
+                            const GstStructure *st = gst_caps_get_structure(caps, 0);
+                            gint w = 0, h = 0;
+                            if (gst_structure_get_int(st, "width", &w) &&
+                                gst_structure_get_int(st, "height", &h) && w > 0 && h > 0) {
+                                playback_info_set_resolution(g_hls_playback_info, (int)w, (int)h);
+                            }
+                            gst_caps_unref(caps);
+                        }
+                        gst_object_unref(pad);
+                    }
+                    gst_object_unref(vsink);
+                }
+            }
 
             if (hls_requested_start_position && hls_seek_enabled) {
                 hls_video_seek_to_start_position(renderer->pipeline);
@@ -1248,10 +1343,15 @@ bool video_get_playback_info(double *duration, double *position, double *seek_st
 }
 
 void video_renderer_set_start(float position) {
-    int pos_in_micros = (int) (position * SECOND_IN_MICROSECS);
-    hls_requested_start_position = (gint64) (pos_in_micros * GST_USECOND);
+    /* reject inf, NaN, negative, or implausibly large values (> 1e9 s ≈ 31 years) */
+    if (!isfinite(position) || position < 0 || position > 1e9f) {
+        hls_requested_start_position = 0;
+        logger_log(logger, LOGGER_INFO, "video_renderer_set_start: ignoring invalid position %f", position);
+        return;
+    }
+    hls_requested_start_position = (gint64)((double)position * GST_SECOND);
     logger_log(logger, LOGGER_DEBUG, "register HLS video start position %f %lld", position,
-               hls_requested_start_position);    
+               hls_requested_start_position);
 }
 
 void video_renderer_seek(float position) {

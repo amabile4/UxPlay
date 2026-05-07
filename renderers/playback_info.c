@@ -23,9 +23,27 @@ struct playback_info_s {
     char video_codec[16];   /* "H.264" / "H.265" / ""  */
     char audio_codec[16];   /* "AAC-ELD" / "ALAC" / "AAC-LC" / "PCM" / "" */
     int  width, height;
+    bool is_hls;
+    char hls_decoder[64];   /* GStreamer が自動選択したビデオデコーダー要素名 */
 };
 
 /* ---- 内部ヘルパー ---- */
+
+static void normalize_video_str(const char *src, char *dst, size_t dstsz) {
+    if (strstr(src, "264") || strstr(src, "AVC"))
+        snprintf(dst, dstsz, "H.264");
+    else if (strstr(src, "265") || strstr(src, "HEVC") || strstr(src, "hevc"))
+        snprintf(dst, dstsz, "H.265");
+    else
+        snprintf(dst, dstsz, "%.15s", src);
+}
+
+static void normalize_audio_str(const char *src, char *dst, size_t dstsz) {
+    if (strstr(src, "AAC") || strstr(src, "aac"))
+        snprintf(dst, dstsz, "AAC");
+    else
+        snprintf(dst, dstsz, "%.15s", src);
+}
 
 static const char *ct_to_name(unsigned char ct) {
     switch (ct) {
@@ -90,22 +108,70 @@ void playback_info_set_resolution(playback_info_t *info, int width, int height) 
     if (!info) return;
     info->width  = width;
     info->height = height;
-    /* 解像度は最後に届く — ここで全情報をまとめてコンソールに出力 */
-    g_print("[AirPlay] %dx%d  Video: %s  Audio: %s  Decoder: %s  Sink: %s\n",
-            width, height,
+    if (info->is_hls) {
+        g_print("[HLS] %dx%d  Video: %s  Audio: %s  Decoder: %s  Sink: %s\n",
+                width, height,
+                info->video_codec[0]  ? info->video_codec  : "?",
+                info->audio_codec[0]  ? info->audio_codec  : "?",
+                info->hls_decoder[0]  ? info->hls_decoder  : "?",
+                info->videosink[0]    ? info->videosink    : "?");
+    } else {
+        g_print("[AirPlay] %dx%d  Video: %s  Audio: %s  Decoder: %s  Sink: %s\n",
+                width, height,
+                info->video_codec[0] ? info->video_codec : "?",
+                info->audio_codec[0] ? info->audio_codec : "?",
+                info->decoder[0]     ? info->decoder     : "?",
+                info->videosink[0]   ? info->videosink   : "?");
+    }
+    update_title(info);
+}
+
+void playback_info_set_hls_decoder(playback_info_t *info, const char *decoder) {
+    if (!info || !decoder) return;
+    snprintf(info->hls_decoder, sizeof(info->hls_decoder), "%s", decoder);
+}
+
+void playback_info_print_hls_state(playback_info_t *info) {
+    if (!info) return;
+    char res[32];
+    if (info->width > 0)
+        snprintf(res, sizeof(res), "%dx%d", info->width, info->height);
+    else
+        snprintf(res, sizeof(res), "unknown");
+    g_print("[HLS] State: Codec=%s  Decoder=%s  Sink=%s  Resolution=%s\n",
             info->video_codec[0] ? info->video_codec : "?",
-            info->audio_codec[0] ? info->audio_codec : "?",
-            info->decoder[0]     ? info->decoder     : "?",
-            info->videosink[0]   ? info->videosink   : "?");
+            info->hls_decoder[0] ? info->hls_decoder : "?",
+            info->videosink[0]   ? info->videosink   : "?",
+            res);
+}
+
+void playback_info_set_hls_mode(playback_info_t *info, bool is_hls) {
+    if (!info) return;
+    info->is_hls = is_hls;
+}
+
+void playback_info_set_video_codec_str(playback_info_t *info, const char *str) {
+    if (!info || !str) return;
+    normalize_video_str(str, info->video_codec, sizeof(info->video_codec));
+    update_title(info);
+}
+
+void playback_info_set_audio_codec_str(playback_info_t *info, const char *str) {
+    if (!info || !str) return;
+    normalize_audio_str(str, info->audio_codec, sizeof(info->audio_codec));
     update_title(info);
 }
 
 void playback_info_clear(playback_info_t *info) {
     if (!info) return;
+    bool had_content = info->video_codec[0] != '\0' || info->audio_codec[0] != '\0';
     info->video_codec[0] = '\0';
     info->audio_codec[0] = '\0';
+    info->hls_decoder[0] = '\0';
     info->width  = 0;
     info->height = 0;
-    g_print("[AirPlay] Stream ended\n");
+    if (had_content) {
+        g_print("%s Stream ended\n", info->is_hls ? "[HLS]" : "[AirPlay]");
+    }
     video_renderer_set_title("UxPlay");
 }

@@ -10,6 +10,8 @@
 #ifndef PLAYBACK_INFO_H
 #define PLAYBACK_INFO_H
 
+#include <stdbool.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -34,6 +36,19 @@ void playback_info_set_resolution(playback_info_t *info, int width, int height);
 
 /** 全接続が切れたときに呼ぶ。codec/resolution をリセットしタイトルを戻す。 */
 void playback_info_clear(playback_info_t *info);
+
+/** HLS モードフラグを設定する。video_renderer.c から呼ばれる。 */
+void playback_info_set_hls_mode(playback_info_t *info, bool is_hls);
+
+/** HLS モード用: GStreamer TAG 文字列からコーデック名を正規化して設定 */
+void playback_info_set_video_codec_str(playback_info_t *info, const char *str);
+void playback_info_set_audio_codec_str(playback_info_t *info, const char *str);
+
+/** HLS モード用: GStreamer が選択したデコーダー要素名を記録する */
+void playback_info_set_hls_decoder(playback_info_t *info, const char *decoder);
+
+/** エラー発生時にコーデック・デコーダー・シンクの現在値をコンソールに出力する */
+void playback_info_print_hls_state(playback_info_t *info);
 
 #ifdef __cplusplus
 }
