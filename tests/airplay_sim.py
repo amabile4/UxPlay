@@ -123,14 +123,21 @@ def send_http_request(host: str, port: int, method: str, path: str,
 # AirPlay HLS simulation
 # ---------------------------------------------------------------------------
 
-def simulate_airplay_hls(host: str, raop_port: int, hls_url: str, test_api_port: int) -> bool:
+def simulate_airplay_hls(host: str, raop_port: int, hls_url: str, test_api_port: int) -> dict:
     """
     AirPlay HLS 接続シーケンスを実行する。
 
     Returns:
-        True: シミュレーション成功
-        False: 失敗
+        dict: 実行結果
+            ok: 全体成功可否
+            play_status_code: POST /play の HTTP ステータス
+            status_snapshot: test/status のスナップショット
     """
+    result = {
+        "ok": False,
+        "play_status_code": None,
+        "status_snapshot": None,
+    }
     rtsp_url = f"rtsp://{host}:{raop_port}/stream"
 
     print(f"[sim] Connecting to UxPlay at {host}:{raop_port}")
@@ -139,7 +146,7 @@ def simulate_airplay_hls(host: str, raop_port: int, hls_url: str, test_api_port:
         session.connect()
     except Exception as e:
         print(f"[sim] ERROR: Cannot connect to UxPlay: {e}")
-        return False
+        return result
 
     # --- Step 1: OPTIONS ---
     print("[sim] Step 1: OPTIONS")
@@ -172,6 +179,7 @@ def simulate_airplay_hls(host: str, raop_port: int, hls_url: str, test_api_port:
             },
             timeout=15,
         )
+        result["play_status_code"] = resp.status_code
         if resp.status_code not in (200, 204):
             print(f"[sim] WARNING: POST /play returned {resp.status_code}")
         else:
@@ -200,6 +208,11 @@ def simulate_airplay_hls(host: str, raop_port: int, hls_url: str, test_api_port:
     try:
         resp = requests.get(f"http://127.0.0.1:{test_api_port}/test/status", timeout=5)
         print(f"[sim] test/status → {resp.status_code}: {resp.text}")
+        if resp.ok:
+            try:
+                result["status_snapshot"] = resp.json()
+            except Exception:
+                pass
     except Exception as e:
         print(f"[sim] test/status failed: {e}")
 
@@ -212,7 +225,8 @@ def simulate_airplay_hls(host: str, raop_port: int, hls_url: str, test_api_port:
 
     session.close()
     print("[sim] Simulation complete")
-    return True
+    result["ok"] = result["play_status_code"] in (200, 204)
+    return result
 
 
 # ---------------------------------------------------------------------------
