@@ -18,6 +18,7 @@ import argparse
 import socket
 import time
 import sys
+import uuid as _uuid
 import plistlib
 import requests
 
@@ -152,10 +153,13 @@ def simulate_airplay_hls(host: str, raop_port: int, hls_url: str, test_api_port:
     # --- Step 2: POST /play via HTTP ---
     # UxPlay の HLS モードでは RTSP ではなく HTTP で /play を受け付ける
     print("[sim] Step 2: POST /play")
+    playback_uuid = str(_uuid.uuid4())
+    session_id = str(_uuid.uuid4())
     play_body = plistlib.dumps({
         "Content-Location": hls_url,
         "clientProcName": "YouTube",
         "Start-Position-Seconds": 0.0,
+        "uuid": playback_uuid,
     }, fmt=plistlib.FMT_BINARY)
     try:
         resp = requests.post(
@@ -164,6 +168,7 @@ def simulate_airplay_hls(host: str, raop_port: int, hls_url: str, test_api_port:
             headers={
                 "Content-Type": "application/x-apple-binary-plist",
                 "User-Agent": "AirPlay/540.31",
+                "X-Apple-Session-ID": session_id,
             },
             timeout=15,
         )
@@ -176,7 +181,7 @@ def simulate_airplay_hls(host: str, raop_port: int, hls_url: str, test_api_port:
 
     # --- Step 3: ステータス確認 ---
     print("[sim] Step 3: Waiting for UxPlay to start HLS playback...")
-    time.sleep(3)
+    time.sleep(10)
 
     # --- Step 4: GET /playback_info ---
     print("[sim] Step 4: GET /playback_info")
