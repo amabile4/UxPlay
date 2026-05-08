@@ -172,9 +172,10 @@ jobs:
       - name: Install test dependencies
         run: pip install -r tests/requirements.txt
 
-      - name: Run regression tests (connectivity level)
+      - name: Run regression tests (-hls connectivity level)
         shell: pwsh
         run: |
+          $env:UXPLAY_NO_PAUSE  = "1"
           $env:UXPLAY_RAOP_PORT = "17001"
           $env:MOCK_HLS_PORT    = "8765"
           $env:UXPLAY_TEST_PORT = "9999"
@@ -212,6 +213,17 @@ jobs:
             }
 
             python -m pytest tests/test_regression.py -v --timeout=60 -k "test_01 or test_02 or test_03"
+            if ($LASTEXITCODE -ne 0) {
+              if (Test-Path uxplay_stdout.txt) {
+                Write-Output "--- uxplay_stdout.txt ---"
+                Get-Content uxplay_stdout.txt
+              }
+              if (Test-Path uxplay_stderr.txt) {
+                Write-Output "--- uxplay_stderr.txt ---"
+                Get-Content uxplay_stderr.txt
+              }
+              exit $LASTEXITCODE
+            }
           }
           finally {
             if ($proc -and -not $proc.HasExited) {

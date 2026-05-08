@@ -196,7 +196,7 @@ echo "=== Step 4: ランチャーバッチファイルを作成 ==="
     printf ') else (\r\n'
     printf '    "%%HERE%%uxplay.exe" %%*\r\n'
     printf ')\r\n'
-    printf 'pause\r\n'
+    printf 'if /I not "%%UXPLAY_NO_PAUSE%%"=="1" pause\r\n'
 } > "$BUILD_DIR/uxplay.bat"
 echo "  作成: $BUILD_DIR/uxplay.bat"
 
