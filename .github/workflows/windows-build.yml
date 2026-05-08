@@ -8,6 +8,7 @@ on:
   push:
     branches:
       - windows-resize
+      - master
 
 jobs:
   build:
@@ -245,7 +246,7 @@ jobs:
         with:
           tag_name: v1.73.6-win1.0
           target_commitish: ${{ github.sha }}
-          name: UxPlay 1.73.6 Windows Port 1.0
+          name: UxPlay 1.73.6-win1
           body: |
             UxPlay 1.73.6 をベースにした Windows スタンドアロンパッケージです。
 
