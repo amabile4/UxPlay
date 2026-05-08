@@ -1,0 +1,26 @@
+{
+  "plugins": {
+    "hlsdemux": true,
+    "hlsdemux2": true,
+    "nvh264dec": true,
+    "nvh265dec": true,
+    "d3d11h264dec": true,
+    "d3d11h265dec": true,
+    "wasapisink": true,
+    "wasapi2sink": true
+  },
+  "hardware": {
+    "gpus": [
+      "NVIDIA GeForce RTX 4070"
+    ],
+    "hasNvidia": true,
+    "hasIntel": false,
+    "hasAmd": false,
+    "source": "fixture"
+  },
+  "launchArgs": [
+    "-hls",
+    "-n",
+    "UxPlay"
+  ]
+}

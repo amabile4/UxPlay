@@ -1,0 +1,264 @@
+name: Windows Build
+
+permissions:
+  contents: write
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - windows-resize
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          # Use the latest MSYS2 release and update packages to avoid stale runtime DLLs.
+          release: true
+          update: true
+          cache: false
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-gstreamer
+            mingw-w64-x86_64-gst-plugins-base
+            mingw-w64-x86_64-gst-plugins-good
+            mingw-w64-x86_64-gst-plugins-bad
+            mingw-w64-x86_64-gst-plugins-ugly
+            mingw-w64-x86_64-gst-libav
+            mingw-w64-x86_64-libplist
+            mingw-w64-x86_64-gnutls
+            mingw-w64-x86_64-openssl
+            ca-certificates
+
+      - name: Dump MSYS2 package versions (diagnostics)
+        shell: msys2 {0}
+        run: |
+          set -e
+          mkdir -p build
+          {
+            echo "# MSYS2 package versions"
+            date -u
+            pacman -Q | grep -E '^(mingw-w64-x86_64-(gcc|gcc-libs|libplist|gnutls|openssl|gstreamer|gst-plugins-base|gst-plugins-good|gst-plugins-bad|gst-plugins-ugly|gst-libav)|ca-certificates) '
+            echo "# gst-plugin-scanner location"
+            find /mingw64 -name "gst-plugin-scanner.exe" 2>/dev/null || echo "NOT FOUND"
+            echo "# gstreamer libexec dir contents"
+            ls /mingw64/libexec/gstreamer-1.0/ 2>/dev/null || echo "DIR NOT FOUND"
+            echo "# gst* in bin"
+            ls /mingw64/bin/gst* 2>/dev/null || echo "NONE"
+          } > build/msys2-package-versions.txt
+          cat build/msys2-package-versions.txt
+
+      - name: Run static GStreamer rank tests
+        shell: pwsh
+        run: |
+          .\tests\test_windows_gst_rank.ps1
+
+      - name: Create Bonjour SDK shim (dlltool, no Bonjour install needed)
+        shell: msys2 {0}
+        run: |
+          SHIM="$(cygpath -u "$GITHUB_WORKSPACE")/ci-bonjour-sdk"
+          mkdir -p "$SHIM/Lib/x64" "$SHIM/Include"
+
+          curl -fsSL \
+            "https://raw.githubusercontent.com/apple-oss-distributions/mDNSResponder/main/mDNSShared/dns_sd.h" \
+            -o "$SHIM/Include/dns_sd.h"
+
+          printf 'LIBRARY dnssd.dll\nEXPORTS\n  DNSServiceRegister\n  DNSServiceRefDeallocate\n  TXTRecordCreate\n  TXTRecordSetValue\n  TXTRecordGetLength\n  TXTRecordGetBytesPtr\n  TXTRecordDeallocate\n' > /tmp/dnssd.def
+
+          dlltool --output-lib "$SHIM/Lib/x64/dnssd.lib" \
+                  --def /tmp/dnssd.def \
+                  --dllname dnssd.dll
+
+          echo "BONJOUR_SDK_HOME=$(cygpath -w "$SHIM")" >> "$GITHUB_ENV"
+
+      - name: Build
+        shell: msys2 {0}
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DNO_MARCH_NATIVE=ON \
+            -DPKG_CONFIG_EXECUTABLE="/mingw64/bin/pkg-config.exe"
+          cmake --build build --parallel
+
+      - name: Deploy (bundle DLLs and plugins)
+        shell: msys2 {0}
+        run: |
+          export BUILD_DIR="$(cygpath -u "$GITHUB_WORKSPACE")/build"
+          bash deploy_windows.sh
+
+      - name: Validate packaged runtime files
+        shell: msys2 {0}
+        run: |
+          BUILD_DIR="$(cygpath -u "$GITHUB_WORKSPACE")/build"
+          test -f "$BUILD_DIR/uxplay.exe"
+          test -f "$BUILD_DIR/uxplay.bat"
+          test -f "$BUILD_DIR/uxplay_gst_rank.ps1"
+          test -f "$BUILD_DIR/check_bonjour_safety.ps1"
+          test -f "$BUILD_DIR/ca-bundle.crt"
+          test -f "$BUILD_DIR/gio/modules/libgiognutls.dll"
+          DLL_COUNT=$(find "$BUILD_DIR" -maxdepth 1 -type f -name "*.dll" | wc -l)
+          if [ "$DLL_COUNT" -lt 80 ]; then
+            echo "Unexpectedly low DLL count: $DLL_COUNT"
+            exit 1
+          fi
+          grep -q "uxplay_gst_rank.ps1" "$BUILD_DIR/uxplay.bat"
+
+      - name: Dump packaged DLL manifest (diagnostics)
+        shell: msys2 {0}
+        run: |
+          set -e
+          BUILD_DIR="$(cygpath -u "$GITHUB_WORKSPACE")/build"
+          {
+            echo "# Top-level DLL manifest"
+            date -u
+            echo
+            for f in "$BUILD_DIR"/*.dll; do
+              [ -f "$f" ] || continue
+              b="$(basename "$f")"
+              src="$(ldd "$f" 2>/dev/null | awk '/\/mingw64\/bin\// { print $3; exit }')"
+              sha="$(sha256sum "$f" | awk '{print $1}')"
+              printf '%s sha256=%s source=%s\n' "$b" "$sha" "${src:-unknown}"
+            done | sort
+          } > "$BUILD_DIR/packaged-dll-manifest.txt"
+          cat "$BUILD_DIR/packaged-dll-manifest.txt"
+
+      - name: Create ZIP archive
+        shell: pwsh
+        run: |
+          if (Test-Path uxplay-windows.zip) { Remove-Item uxplay-windows.zip -Force }
+          Compress-Archive -Path build\* -DestinationPath uxplay-windows.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: uxplay-windows-${{ github.ref_name }}-${{ github.sha }}
+          path: uxplay-windows.zip
+          retention-days: 30
+
+  test:
+    needs: build
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: uxplay-windows-${{ github.ref_name }}-${{ github.sha }}
+          path: artifact
+
+      - name: Extract artifact
+        shell: pwsh
+        run: Expand-Archive artifact\uxplay-windows.zip -DestinationPath build
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install test dependencies
+        run: pip install -r tests/requirements.txt
+
+      - name: Run regression tests (-hls connectivity level)
+        shell: pwsh
+        run: |
+          $env:UXPLAY_NO_PAUSE  = "1"
+          $env:UXPLAY_RAOP_PORT = "17001"
+          $env:MOCK_HLS_PORT    = "8765"
+          $env:UXPLAY_TEST_PORT = "9999"
+          $env:PYTHONPATH       = "${{ github.workspace }}\tests"
+
+          # uxplay.bat で環境変数(DLL パス等)を設定して起動する
+          # -p 17000 でRAOPポートを固定、-vs 0 でGUI ウィンドウ非表示(-hls との組み合わせ確認済み)
+          $proc = Start-Process cmd -ArgumentList '/c', 'build\uxplay.bat --test-mode --test-port 9999 -hls -n UxPlayTestDevice -p 17000 -vs 0 > uxplay_stdout.txt 2> uxplay_stderr.txt' -NoNewWindow -PassThru
+          Write-Output "UxPlay PID: $($proc.Id)"
+
+          try {
+            $deadline = (Get-Date).AddSeconds(45)
+            $ready = $false
+            while ((Get-Date) -lt $deadline) {
+              try {
+                $status = Invoke-RestMethod -Uri "http://127.0.0.1:9999/test/status" -TimeoutSec 2
+                Write-Output "test/status became reachable: $($status | ConvertTo-Json -Compress)"
+                $ready = $true
+                break
+              } catch {
+                Start-Sleep -Seconds 2
+              }
+            }
+
+            if (-not $ready) {
+              if (Test-Path uxplay_stdout.txt) {
+                Write-Output "--- uxplay_stdout.txt ---"
+                Get-Content uxplay_stdout.txt
+              }
+              if (Test-Path uxplay_stderr.txt) {
+                Write-Output "--- uxplay_stderr.txt ---"
+                Get-Content uxplay_stderr.txt
+              }
+              throw "UxPlay test server did not become reachable in time"
+            }
+
+            python -m pytest tests/test_regression.py -v --timeout=60 -k "test_01 or test_02 or test_03"
+            if ($LASTEXITCODE -ne 0) {
+              if (Test-Path uxplay_stdout.txt) {
+                Write-Output "--- uxplay_stdout.txt ---"
+                Get-Content uxplay_stdout.txt
+              }
+              if (Test-Path uxplay_stderr.txt) {
+                Write-Output "--- uxplay_stderr.txt ---"
+                Get-Content uxplay_stderr.txt
+              }
+              exit $LASTEXITCODE
+            }
+          }
+          finally {
+            if ($proc -and -not $proc.HasExited) {
+              Stop-Process -Id $proc.Id -Force
+            }
+          }
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: uxplay-test-logs
+          path: |
+            uxplay_stdout.txt
+            uxplay_stderr.txt
+
+      - name: Publish ZIP to rolling release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.73.6-win1.0
+          target_commitish: ${{ github.sha }}
+          name: UxPlay 1.73.6 Windows Port 1.0
+          body: |
+            UxPlay 1.73.6 をベースにした Windows スタンドアロンパッケージです。
+
+            **追加機能:** AirPlay 画面向き変更時のウィンドウサイズ自動調整
+
+            **使い方:** `uxplay-windows.zip` を展開し `uxplay.bat` をダブルクリック
+
+            **⚠️ 要件:** Bonjour for Windows が必要です（iTunes または [Bonjour Print Services](https://support.apple.com/ja-jp/106380) でインストール）
+
+            Built from `${{ github.ref_name }}` @ `${{ github.sha }}`
+          files: artifact/uxplay-windows.zip
+          overwrite_files: true
+          fail_on_unmatched_files: true
+          draft: false
+          prerelease: true
+          make_latest: false
