@@ -3392,6 +3392,8 @@ int main (int argc, char *argv[]) {
 }
  
 static void cleanup() {
+    test_httpd_stop(g_test_httpd);
+    g_test_httpd = nullptr;
     playback_info_destroy(g_playback_info);
     g_playback_info = nullptr;
     if (use_audio) {
